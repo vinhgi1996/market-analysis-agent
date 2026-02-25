@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    container_name: ana_postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: anadb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+
+  # -------------------------------------------------
+  # Redis In-Memory Data Store (for cache, counters, sessions)
+  # -------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ana_redis
+    ports:
+      - "6379:6379"
+    # You can optionally set a password by uncommenting below:
+    # environment:
+    #   REDIS_PASSWORD: mysecretpassword
+    command: >
+      sh -c "redis-server
+             --requirepass $$REDIS_PASSWORD
+             --appendonly yes
+             --save 60 1
+             --maxmemory-policy allkeys-lru"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "$$REDIS_PASSWORD", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  postgres_data:
+  minio_data:
+  redis_data:
