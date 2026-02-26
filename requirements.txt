@@ -1,4 +1,5 @@
 vnstock~=3.4.2
+vnstock_data
 pytz
 pydantic~=2.12.4
 pydantic-settings~=2.12.0
@@ -7,3 +8,4 @@ uvicorn
 python-dotenv~=1.1.0
 psycopg2-binary~=2.9.10
 asyncpg~=0.30.0
+pandas~=3.0.1
