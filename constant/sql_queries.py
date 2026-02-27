@@ -1,7 +1,7 @@
 """
 constant/sql_queries.py
 
-This module centralizes all SQL queries used in the project.
+This module centralizes all general SQL queries used in the project.
 - Each query is defined as an Enum member.
 - The Enum approach provides:
     1. Strong names for queries to prevent typos
@@ -14,7 +14,7 @@ from enum import Enum
 
 class SQLQueries(str, Enum):
     """
-    Enum for all SQL queries in the project.
+    Enum for all general SQL queries in the project.
 
     Each member's value is the actual SQL string. Use `.value` when passing to
     database execution functions.
