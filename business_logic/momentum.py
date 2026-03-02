@@ -1,7 +1,13 @@
-from business_logic.momentum_pipeline_v1 import MomentumPipeline
+import time
+
+from business_logic.moving_average_pipeline_v1 import MovingAveragePipeline
+from business_logic.rsi_pipeline_v1 import RsiPipeline
 from config.postgre_manager import PostgresManager
-from constant.momentum_sql_queries import MomentumSQLQueries
-from constant.sql_queries import SQLQueries
+from constant.constants.rsi_constant import RsiConstant
+from constant.sql.momentum_sql_queries import MomentumSQLQueries
+from constant.sql.rsi_sql_queries import RsiSQLQueries
+from constant.sql.sql_queries import SQLQueries
+from util.pandas_util import PandasUtil
 from util.postgre_sql import PostgresSQLUtil
 import pandas as pd
 from io import StringIO
@@ -118,10 +124,122 @@ def store_momentum_metrics(df:pd.DataFrame)->None:
         logger.error(f"[store_momentum_metrics] Bulk upsert failed: {e}")
         raise
 
+def synthesize_momentum_metrics(symbol:str)->pd.DataFrame:
+    logger.info("Momentum metrics synthesys started.")
+    # --------------------------------------------------
+    # Data retrieving
+    # --------------------------------------------------
+    data =  PostgresSQLUtil.run_sql(MomentumSQLQueries.GET_DATA_BY_DATE_AND_SYMBOL,(symbol,))
+    # --------------------------------------------------
+    # Ensure pandas DataFrame
+    # --------------------------------------------------
+    if not isinstance(data, pd.DataFrame):
+        df = pd.DataFrame(data)
+    else:
+        df = data.copy()
+
+    # this line of code handling the mismatch data type problem
+    # between numeric data type in postgre and float type in Pandas
+    df = df.astype({col: "float64" for col in df.columns if df[col].dtype == "object"})
+
+    # --------------------------------------------------
+    # Momentum calculating
+    # --------------------------------------------------
+
+    #standard momentum
+    df["m_3"] = df["close"] / df["close_63"] - 1
+    df["m_6"] = df["close"] / df["close_126"] - 1
+    df["m_12"] = df["close"] / df["close_252"] - 1
+
+    #composite momentum
+    df["m_composite"] = (df["m_3"] + df["m_6"] + df["m_12"]) /3
+
+    required_columns = [
+        "symbol",
+        "time",
+        "m_3",
+        "m_6",
+        "m_12",
+        "m_composite"
+    ]
+
+    df = df[required_columns]
+
+    logger.info("Momentum metrics synthesys ended.")
+
+    return df
+
+def rsi_incremental_synthesize( symbol: str, date :str) -> pd.DataFrame:
+    ohlvc_data = PostgresSQLUtil.run_sql(
+        RsiSQLQueries.GET_DATA_BY_DATE_SYMBOL_OHLVC,
+        (symbol, date)
+    )
+    rsi_data = PostgresSQLUtil.run_sql(
+        RsiSQLQueries.GET_DATA_BY_DATE_SYMBOL_RSI,
+        (symbol, date)
+    )
+    if len(ohlvc_data) < 2 or not rsi_data:
+        raise ValueError("Insufficient data for incremental RSI computation")
+
+        # Extract rows directly (no DataFrame needed)
+    prev_close = float(ohlvc_data[-2]["close"])
+    current_row = ohlvc_data[-1]
+    current_close = float(current_row["close"])
+
+    prev_avg_gain = float(rsi_data[-1]["average_gain_14"])
+    prev_avg_loss = float(rsi_data[-1]["average_loss_14"])
+
+    # Compute delta manually
+    delta = current_close - prev_close
+    gain = max(delta, 0)
+    loss = max(-delta, 0)
+
+    # Wilder smoothing formula
+    avg_gain = (prev_avg_gain * 13 + gain) / 14
+    avg_loss = (prev_avg_loss * 13 + loss) / 14
+
+    # Prevent division by zero
+    if avg_loss == 0:
+        rsi = 100.0
+    else:
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+
+    # Build result DataFrame properly
+    result_df = pd.DataFrame([{
+        RsiConstant.SYMBOL_KEY.value: symbol,
+        RsiConstant.TIME_KEY.value: current_row[RsiConstant.TIME_KEY.value],
+        RsiConstant.RSI_14.value: rsi,
+        RsiConstant.AVG_GAIN_14.value: avg_gain,
+        RsiConstant.AVG_LOSS_14.value: avg_loss
+    }])
+    return result_df
+
+
 if __name__ == "__main__":
     #momentum_ohlcv()
-    pipeline = MomentumPipeline(max_workers=5,
-                                symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
-                                mode="incremental",
-                                current_time='2026-02-26')
+    # pipeline = MomentumPipeline(max_workers=5,
+    #                             symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                             mode="incremental",
+    #                             current_time='2026-02-26')
+    # pipeline.run_all_parallel()
+
+    # pipeline = MovingAveragePipeline(max_workers=5,
+    #                             symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                             mode="incremental",
+    #                             current_time='2026-02-26')
+    # pipeline.run_all_parallel()
+    start = time.perf_counter()
+    pipeline = RsiPipeline(max_workers=4,
+                           symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+                           mode="incremental",
+                           current_time='2026-2-26')
     pipeline.run_all_parallel()
+    end = time.perf_counter()
+    print(f"Total execution time: {end - start:.6f} seconds")
+
+
+
+
+
+0

@@ -1,9 +1,8 @@
-import pandas as pd
 import logging
 import time
 from vnstock import Quote,Listing
 from io import StringIO
-from constant.sql_queries import SQLQueries
+from constant.sql.sql_queries import SQLQueries
 from util.postgre_sql import PostgresSQLUtil
 import pandas as pd
 logger = logging.getLogger(__name__)

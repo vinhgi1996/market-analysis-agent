@@ -1,37 +1,28 @@
-# Database connection/context manager for synchronous Postgres operations.                                                                                                        
+import logging
+
+import numpy as np
+
 from config.postgre_manager import PostgresManager
-from constant.constants.momentum_constant import MomentumConstant
-
-# SQL templates specific to momentum pipeline operations.
-from constant.sql.momentum_sql_queries import MomentumSQLQueries
-
-# Utility wrapper to execute SQL and return Python-friendly results.
+from constant.constants.moving_average_constant import MaConstant
+from constant.sql.moving_average_sql_queries import MovingAverageSQLQueries
 from util.postgre_sql import PostgresSQLUtil
-
 # Thread pool for running symbol jobs concurrently.
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import logging
+
 import pandas as pd
 from io import StringIO
 
-
-class MomentumPipeline:
-    """
-    Momentum pipeline:
-    1) Pull price snapshots (depends on mode: backfill/incremental)
-    2) Compute momentum features (3m/6m/12m + composite)
-    3) Upsert behavior via delete-then-copy into target table
-    """
+class MovingAveragePipeline:
 
     def __init__(
             self,
-            max_workers: int = MomentumConstant.MAX_WORKERS.value,
+            max_workers: int = MaConstant.MAX_WORKERS.value,
             symbol_queries: str = "",
             current_time: str = "",
             mode: str = ""
     ):
-        # Class-scoped logger name, e.g., "MomentumPipeline".
+        # Class-scoped logger name, e.g., "MovingAveragePipeline".
         self.logger = logging.getLogger(self.__class__.__name__)
 
         # Number of worker threads used in run_all_parallel.
@@ -51,25 +42,30 @@ class MomentumPipeline:
     # =========================================================
 
     def run(self, symbol: str):
-        """
-        Process one symbol end-to-end:
-        - Pull source rows for that symbol
-        - Compute momentum columns
-        - Persist computed rows
-        """
-        try:
-            self.logger.info(MomentumConstant.LOG_START.value.format(symbol=symbol))
 
-            # Build momentum dataframe for this symbol.
-            df = self._synthesize(symbol, self.current_time, self.mode)
+        try:
+            self.logger.info(
+                MaConstant.LOG_START.value.format(symbol=symbol)
+            )
+
+            df = None
+
+            if self.mode == MaConstant.MODE_BACKFILL.value:
+                df = self._backfill_synthesize(symbol)
+            elif self.mode == MaConstant.MODE_INCREMENTAL.value:
+                df = self._incremental_synthesize(symbol,self.current_time)
 
             # Persist dataframe (delete existing range first, then bulk copy).
             self._store(df, self.current_time)
 
-            self.logger.info(MomentumConstant.LOG_FINISH.value.format(symbol=symbol))
+            self.logger.info(
+                MaConstant.LOG_FINISH.value.format(symbol=symbol)
+            )
         except Exception as e:
             # Error is logged, not re-raised -> job continues for other symbols.
-            self.logger.error(MomentumConstant.LOG_ERROR.value.format(symbol=symbol, error=e))
+            self.logger.error(
+                MaConstant.LOG_ERROR.value.format(symbol=symbol, error=e)
+            )
 
     def run_all_parallel(self):
         """
@@ -77,11 +73,11 @@ class MomentumPipeline:
         using ThreadPoolExecutor.
         """
         # NOTE: This string appears to have encoding artifacts in current source.
-        self.logger.info(MomentumConstant.LOG_PARALLEL_START.value)
+        self.logger.info(MaConstant.LOG_PARALLEL_START.value)
 
         # Expect list[dict], each dict has at least key: "symbol".
         symbols = PostgresSQLUtil.run_sql(self.symbol_queries)
-        symbol_list = [s[MomentumConstant.SYMBOL_KEY.value] for s in symbols]
+        symbol_list = [s[MaConstant.SYMBOL_KEY.value] for s in symbols]
 
         # Thread pool dispatch: each symbol runs independently.
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -91,30 +87,20 @@ class MomentumPipeline:
             for future in as_completed(futures):
                 future.result()
 
-        # NOTE: This string appears to have encoding artifacts in current source.
-        self.logger.info(MomentumConstant.LOG_PARALLEL_FINISH.value)
+                # NOTE: This string appears to have encoding artifacts in current source.
+        self.logger.info(MaConstant.LOG_PARALLEL_FINISH.value)
 
     # =========================================================
     # Feature Engineering
     # =========================================================
 
-    def _synthesize(self, symbol: str, date: str, mode: str) -> pd.DataFrame:
-
-        data = None
+    def _backfill_synthesize(self, symbol: str) -> pd.DataFrame:
 
         # Backfill: fetch broad historical set for symbol.
-        if mode == MomentumConstant.MODE_BACKFILL.value:
-            data = PostgresSQLUtil.run_sql(
-                MomentumSQLQueries.GET_DATA_BY_SYMBOL,
-                (symbol,)
-            )
-
-        # Incremental: fetch only rows relevant to current date boundary.
-        elif mode == MomentumConstant.MODE_INCREMENTAL.value:
-            data = PostgresSQLUtil.run_sql(
-                MomentumSQLQueries.GET_DATA_BY_DATE_SYMBOL,
-                (symbol, date)
-            )
+        data = PostgresSQLUtil.run_sql(
+            MovingAverageSQLQueries.GET_DATA_BY_SYMBOL,
+            (symbol,)
+        )
 
         # Convert row dict/list into DataFrame for vectorized computation.
         df = pd.DataFrame(data).copy()
@@ -123,38 +109,70 @@ class MomentumPipeline:
         # CAUTION: This attempts conversion for all object columns, which may fail
         # if non-numeric string columns exist in result set.
         df = df.astype({
-            col: MomentumConstant.FLOAT64_DTYPE.value
+            col: MaConstant.FLOAT64_DTYPE.value
             for col in df.columns
-            if df[col].dtype == MomentumConstant.OBJECT_DTYPE.value
+            if df[col].dtype == MaConstant.OBJECT_DTYPE.value
         })
 
-        # Momentum features based on lagged closes (63/126/252 trading days).
-        df[MomentumConstant.M_3_KEY.value] = (
-            df[MomentumConstant.CLOSE_KEY.value] / df[MomentumConstant.CLOSE_63_KEY.value] - MomentumConstant.ONE.value
+        # Simple moving average features based on lagged closes (50/200/ trading days).
+        df[MaConstant.SMA_50_KEY.value] = (
+            df[MaConstant.CLOSE_KEY.value]
+            .rolling(MaConstant.SMA_50_WINDOW.value)
+            .mean()
+            .shift(1)
         )
-        df[MomentumConstant.M_6_KEY.value] = (
-            df[MomentumConstant.CLOSE_KEY.value] / df[MomentumConstant.CLOSE_126_KEY.value] - MomentumConstant.ONE.value
+        df[MaConstant.SMA_200_KEY.value] = (
+            df[MaConstant.CLOSE_KEY.value]
+            .rolling(MaConstant.SMA_200_WINDOW.value)
+            .mean()
+            .shift(1)
         )
-        df[MomentumConstant.M_12_KEY.value] = (
-            df[MomentumConstant.CLOSE_KEY.value] / df[MomentumConstant.CLOSE_252_KEY.value] - MomentumConstant.ONE.value
-        )
-
-        # Equal-weight composite momentum score.
-        df[MomentumConstant.M_COMPOSITE_KEY.value] = (
-            df[MomentumConstant.M_3_KEY.value] + df[MomentumConstant.M_6_KEY.value] + df[MomentumConstant.M_12_KEY.value]
-        ) / MomentumConstant.COMPOSITE_DIVISOR.value
 
         # Keep only persistence contract columns (order matters for COPY).
         return df[
             [
-                MomentumConstant.SYMBOL_KEY.value,
-                MomentumConstant.TIME_KEY.value,
-                MomentumConstant.M_3_KEY.value,
-                MomentumConstant.M_6_KEY.value,
-                MomentumConstant.M_12_KEY.value,
-                MomentumConstant.M_COMPOSITE_KEY.value,
+                MaConstant.SYMBOL_KEY.value,
+                MaConstant.TIME_KEY.value,
+                MaConstant.SMA_50_KEY.value,
+                MaConstant.SMA_200_KEY.value,
             ]
         ]
+
+    def _incremental_synthesize(self, symbol: str, date: str) -> pd.DataFrame:
+
+        data = PostgresSQLUtil.run_sql(
+            MovingAverageSQLQueries.GET_DATA_BY_DATE_SYMBOL,
+            (symbol,date)
+        )
+
+        # Convert row dict/list into DataFrame for vectorized computation.
+        df = pd.DataFrame(data).copy()
+
+        # Convert object columns to float64 (commonly NUMERIC from DB).
+        # CAUTION: This attempts conversion for all object columns, which may fail
+        # if non-numeric string columns exist in result set.
+        df = df.astype({
+            col: MaConstant.FLOAT64_DTYPE.value
+            for col in df.columns
+            if df[col].dtype == MaConstant.OBJECT_DTYPE.value
+        })
+
+        # Simple moving average features based on lagged closes which using data up to T-1 day (50/200/ trading days).
+        last_row = df.iloc[-1]
+
+        close_values = df[MaConstant.CLOSE_KEY.value].values
+        n = len(close_values)
+
+        sma_50 = close_values[-51:-1].mean() if n >= 51 else np.nan
+        sma_200 = close_values[-201:-1].mean() if n >= 201 else np.nan
+
+        return pd.DataFrame([{
+            MaConstant.SYMBOL_KEY.value: last_row[MaConstant.SYMBOL_KEY.value],
+            MaConstant.TIME_KEY.value: last_row[MaConstant.TIME_KEY.value],
+            MaConstant.SMA_50_KEY.value: sma_50,
+            MaConstant.SMA_200_KEY.value: sma_200
+        }])
+
 
     # =========================================================
     # Persistence
@@ -172,20 +190,20 @@ class MomentumPipeline:
             return
 
         # Assumes dataframe contains a single symbol only.
-        symbol = df[MomentumConstant.SYMBOL_KEY.value].iloc[0]
+        symbol = df[MaConstant.SYMBOL_KEY.value].iloc[0]
 
         with PostgresManager.get_sync_connection() as conn:
             with conn.cursor() as cursor:
                 # Performance optimization:
                 # allow faster commit behavior for this transaction scope.
                 # Do not using this option for important data which can't be recovered
-                cursor.execute(MomentumConstant.SET_SYNC_COMMIT_OFF.value)
+                cursor.execute(MaConstant.SET_SYNC_COMMIT_OFF.value)
 
                 # Remove existing rows before reloading.
                 # For backfill: date is oldest bound -> broad cleanup.
                 # For incremental: date is new boundary -> narrow cleanup.
                 cursor.execute(
-                    MomentumSQLQueries.DELETE_MOMENTUM_DATA,
+                    MovingAverageSQLQueries.DELETE_MA_DATA,
                     (symbol, date)
                 )
 
@@ -196,9 +214,10 @@ class MomentumPipeline:
 
                 # High-throughput insert into momentum target table.
                 cursor.copy_expert(
-                    MomentumSQLQueries.COPY_MOMENTUM_DATA,
+                    MovingAverageSQLQueries.COPY_MA_DATA,
                     buffer
                 )
 
-            # Commit after delete + copy.
+                # Commit after delete + copy.
             conn.commit()
+
