@@ -1,12 +1,17 @@
 import time
 
+import numpy as np
+
 from business_logic.moving_average_pipeline_v1 import MovingAveragePipeline
 from business_logic.rsi_pipeline_v1 import RsiPipeline
+from business_logic.volatility_pipeline_v1 import VolatilityPipeline
 from config.postgre_manager import PostgresManager
 from constant.constants.rsi_constant import RsiConstant
+from constant.constants.volatility_constant import VolatilityConstant
 from constant.sql.momentum_sql_queries import MomentumSQLQueries
 from constant.sql.rsi_sql_queries import RsiSQLQueries
 from constant.sql.sql_queries import SQLQueries
+from constant.sql.volatility_sql_queries import VolatilitySQLQueries
 from util.pandas_util import PandasUtil
 from util.postgre_sql import PostgresSQLUtil
 import pandas as pd
@@ -213,7 +218,74 @@ def rsi_incremental_synthesize( symbol: str, date :str) -> pd.DataFrame:
         RsiConstant.AVG_GAIN_14.value: avg_gain,
         RsiConstant.AVG_LOSS_14.value: avg_loss
     }])
-    return result_df
+    return
+
+def volatility_backfill_synthesize(symbol: str) -> pd.DataFrame:
+
+    # Backfill: fetch broad historical set for symbol.
+    data = PostgresSQLUtil.run_sql(
+        VolatilitySQLQueries.GET_DATA_BY_SYMBOL_OHLVC,
+        (symbol,)
+    )
+
+    # Convert row dict/list into DataFrame for vectorized computation.
+    df = pd.DataFrame(data).copy()
+
+    # Convert object columns to float64 (commonly NUMERIC from DB).
+    # CAUTION: This attempts conversion for all object columns, which may fail
+    # if non-numeric string columns exist in result set.
+    df = PandasUtil.cast_object_columns_to_float64(df)
+
+    # Log returns
+    df["log_return"] = np.log(df["close"] / df["close"].shift(1))
+
+    # Rolling volatility
+    for w in [20, 60, 252]:
+        df[f"vol_{w}d"] = (
+            df["log_return"]
+            .rolling(w)
+            .std() * np.sqrt(252)
+        )
+
+    # ATR
+    prev_close = df["close"].shift(1)
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - prev_close).abs(),
+        (df["low"] - prev_close).abs()
+    ], axis=1).max(axis=1)
+
+    df["atr_14_w"] = tr.ewm(alpha=1/14, adjust=False).mean()
+    df["atr_14_r"] = tr.rolling(14).mean()
+
+    # Parkinson 20d
+    pk = np.log(df["high"] / df["low"])**2
+    df["parkinson_20d"] = (
+        (pk.rolling(20).sum()) /
+        (4 * 20 * np.log(2))
+    )**0.5 * np.sqrt(252)
+
+    # Volatility percentile
+    df["vol_20d_pct"] = (
+        df["vol_20d"]
+        .rolling(252)
+        .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1])
+    )
+    print(f"Volatility backfill synthesize: {df.tail(20)}")
+    # Keep only persistence contract columns (order matters for COPY).
+    return df[
+        [
+            VolatilityConstant.SYMBOL_KEY.value,
+            VolatilityConstant.TIME_KEY.value,
+            VolatilityConstant.VOL_20D.value,
+            VolatilityConstant.VOL_60D.value,
+            VolatilityConstant.VOL_252D.value,
+            VolatilityConstant.ATR_14_R.value,
+            VolatilityConstant.ATR_14_W.value,
+            VolatilityConstant.PARKINSON_20D.value,
+            VolatilityConstant.VOL_20D_PCT.value,
+        ]
+    ]
 
 
 if __name__ == "__main__":
@@ -229,17 +301,25 @@ if __name__ == "__main__":
     #                             mode="incremental",
     #                             current_time='2026-02-26')
     # pipeline.run_all_parallel()
+    # start = time.perf_counter()
+    # pipeline = RsiPipeline(max_workers=4,
+    #                        symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                        mode="incremental",
+    #                        current_time='2026-2-26')
+    # pipeline.run_all_parallel()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}
+
     start = time.perf_counter()
-    pipeline = RsiPipeline(max_workers=4,
+    pipeline = VolatilityPipeline(max_workers=4,
                            symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
-                           mode="incremental",
-                           current_time='2026-2-26')
+                           mode="backfill",
+                           current_time='2023-01-02')
     pipeline.run_all_parallel()
     end = time.perf_counter()
-    print(f"Total execution time: {end - start:.6f} seconds")
+    print(f"Total execution time: {end - start:.6f}")
+    
 
 
 
 
-
-0

@@ -1,10 +1,13 @@
 import logging
 
 import numpy as np
+from pandas.core.interchange.dataframe_protocol import DataFrame
 
 from config.postgre_manager import PostgresManager
 from constant.constants.rsi_constant import RsiConstant
+from constant.constants.volatility_constant import VolatilityConstant
 from constant.sql.rsi_sql_queries import RsiSQLQueries
+from constant.sql.volatility_sql_queries import VolatilitySQLQueries
 from util.pandas_util import PandasUtil
 from util.postgre_sql import PostgresSQLUtil
 # Thread pool for running symbol jobs concurrently.
@@ -14,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from io import StringIO
 
-class RsiPipeline:
+class VolatilityPipeline:
 
     def __init__(
             self,
@@ -94,11 +97,46 @@ class RsiPipeline:
     # Feature Engineering
     # =========================================================
 
+    def _calculate_log_return(self, df: pd.DataFrame) -> pd.Series:
+        return np.log(df["close"] / df["close"].shift(1))
+
+    def _calculate_rolling_volatility(self, log_return: pd.Series) -> dict[str, pd.Series]:
+        volatility_map = {}
+        for w in [20, 60, 252]:
+            volatility_map[f"vol_{w}d"] = (
+                    log_return
+                    .rolling(w)
+                    .std() * np.sqrt(252)
+            )
+        return volatility_map
+
+    def _calculate_true_range(self, df: pd.DataFrame) -> pd.Series:
+        prev_close = df["close"].shift(1)
+        return pd.concat([
+            df["high"] - df["low"],
+            (df["high"] - prev_close).abs(),
+            (df["low"] - prev_close).abs()
+        ], axis=1).max(axis=1)
+
+    def _calculate_atr_14_r(self, tr: pd.Series) -> pd.Series:
+        return tr.rolling(14).mean()
+
+    def _calculate_parkinson_20d(self, df: pd.DataFrame) -> pd.Series:
+        pk = np.log(df["high"] / df["low"]) ** 2
+        return ((pk.rolling(20).sum()) /(4 * 20 * np.log(2))) ** 0.5 * np.sqrt(252)
+
+    def _calculate_vol_20d_pct(self, df: pd.DataFrame) -> pd.Series:
+        return (
+            df["vol_20d"]
+            .rolling(252)
+            .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1])
+        )
+
     def _backfill_synthesize(self, symbol: str) -> pd.DataFrame:
 
         # Backfill: fetch broad historical set for symbol.
         data = PostgresSQLUtil.run_sql(
-            RsiSQLQueries.GET_DATA_BY_SYMBOL_OHLVC,
+            VolatilitySQLQueries.GET_DATA_BY_SYMBOL_OHLVC,
             (symbol,)
         )
 
@@ -110,30 +148,38 @@ class RsiPipeline:
         # if non-numeric string columns exist in result set.
         df = PandasUtil.cast_object_columns_to_float64(df)
 
-        period = 14
+        # Log returns
+        df["log_return"] = self._calculate_log_return(df)
 
-        delta = df["close"].diff()
+        # Rolling volatility
+        vol_map = self._calculate_rolling_volatility(df["log_return"])
+        for col_name, series in vol_map.items():
+            df[col_name] = series
 
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
+        # ATR
+        tr = self._calculate_true_range(df)
+        #df["atr_14_w"] = tr.ewm(alpha=1 / 14, adjust=False).mean()
+        df["atr_14_r"] = self._calculate_atr_14_r(tr)
+        df["atr_14_w"] = self._wilder_atr_df(df, 14)
 
-        avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+        # Parkinson 20d
+        df["parkinson_20d"] = self._calculate_parkinson_20d(df)
 
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
+        # Volatility percentile
+        df["vol_20d_pct"] = self._calculate_vol_20d_pct(df)
 
-        df[RsiConstant.RSI_14.value] = rsi
-        df[RsiConstant.AVG_GAIN_14.value] = avg_gain
-        df[RsiConstant.AVG_LOSS_14.value] = avg_loss
         # Keep only persistence contract columns (order matters for COPY).
         return df[
             [
-                RsiConstant.SYMBOL_KEY.value,
-                RsiConstant.TIME_KEY.value,
-                RsiConstant.RSI_14.value,
-                RsiConstant.AVG_GAIN_14.value,
-                RsiConstant.AVG_LOSS_14.value,
+                VolatilityConstant.SYMBOL_KEY.value,
+                VolatilityConstant.TIME_KEY.value,
+                VolatilityConstant.VOL_20D.value,
+                VolatilityConstant.VOL_60D.value,
+                VolatilityConstant.VOL_252D.value,
+                VolatilityConstant.ATR_14_R.value,
+                VolatilityConstant.ATR_14_W.value,
+                VolatilityConstant.PARKINSON_20D.value,
+                VolatilityConstant.VOL_20D_PCT.value,
             ]
         ]
 
@@ -183,6 +229,35 @@ class RsiPipeline:
         }])
         return result_df
 
+    def _wilder_atr_df(self,df, n=14):
+        high = df["high"].to_numpy()
+        low = df["low"].to_numpy()
+        close = df["close"].to_numpy()
+
+        length = len(df)
+
+        # --- True Range ---
+        prev_close = np.roll(close, 1)
+        prev_close[0] = close[0]
+
+        tr = np.maximum.reduce([
+            high - low,
+            np.abs(high - prev_close),
+            np.abs(low - prev_close)
+        ])
+
+        # --- ATR ---
+        atr = np.full(length, np.nan)
+
+        # Seed
+        atr[n - 1] = tr[:n].mean()
+
+        # Wilder recursion
+        for i in range(n, length):
+            atr[i] = (atr[i - 1] * (n - 1) + tr[i]) / n
+
+        return atr
+
 
     # =========================================================
     # Persistence
@@ -200,20 +275,20 @@ class RsiPipeline:
             return
 
         # Assumes dataframe contains a single symbol only.
-        symbol = df[RsiConstant.SYMBOL_KEY.value].iloc[0]
+        symbol = df[VolatilityConstant.SYMBOL_KEY.value].iloc[0]
 
         with PostgresManager.get_sync_connection() as conn:
             with conn.cursor() as cursor:
                 # Performance optimization:
                 # allow faster commit behavior for this transaction scope.
                 # Do not using this option for important data which can't be recovered
-                cursor.execute(RsiConstant.SET_SYNC_COMMIT_OFF.value)
+                cursor.execute(VolatilityConstant.SET_SYNC_COMMIT_OFF.value)
 
                 # Remove existing rows before reloading.
                 # For backfill: date is oldest bound -> broad cleanup.
                 # For incremental: date is new boundary -> narrow cleanup.
                 cursor.execute(
-                    RsiSQLQueries.DELETE_RSI_DATA,
+                    VolatilitySQLQueries.DELETE_VOLATILITY_DATA,
                     (symbol, date)
                 )
 
@@ -224,7 +299,7 @@ class RsiPipeline:
 
                 # High-throughput insert into momentum target table.
                 cursor.copy_expert(
-                    RsiSQLQueries.COPY_RSI_DATA,
+                    VolatilitySQLQueries.COPY_VOLATILITY_DATA,
                     buffer
                 )
 
