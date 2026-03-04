@@ -114,7 +114,13 @@ class MovingAveragePipeline:
             if df[col].dtype == MaConstant.OBJECT_DTYPE.value
         })
 
-        # Simple moving average features based on lagged closes (50/200/ trading days).
+        # Simple moving average features based on lagged closes (20/50/200/ trading days).
+        df[MaConstant.SMA_20_KEY.value] = (
+            df[MaConstant.CLOSE_KEY.value]
+            .rolling(MaConstant.SMA_20_WINDOW.value)
+            .mean()
+            .shift(1)
+        )
         df[MaConstant.SMA_50_KEY.value] = (
             df[MaConstant.CLOSE_KEY.value]
             .rolling(MaConstant.SMA_50_WINDOW.value)
@@ -133,6 +139,7 @@ class MovingAveragePipeline:
             [
                 MaConstant.SYMBOL_KEY.value,
                 MaConstant.TIME_KEY.value,
+                MaConstant.SMA_20_KEY.value,
                 MaConstant.SMA_50_KEY.value,
                 MaConstant.SMA_200_KEY.value,
             ]
@@ -163,12 +170,14 @@ class MovingAveragePipeline:
         close_values = df[MaConstant.CLOSE_KEY.value].values
         n = len(close_values)
 
+        sma_20 = close_values[-21:-1].mean() if n >= 21 else np.nan
         sma_50 = close_values[-51:-1].mean() if n >= 51 else np.nan
         sma_200 = close_values[-201:-1].mean() if n >= 201 else np.nan
 
         return pd.DataFrame([{
             MaConstant.SYMBOL_KEY.value: last_row[MaConstant.SYMBOL_KEY.value],
             MaConstant.TIME_KEY.value: last_row[MaConstant.TIME_KEY.value],
+            MaConstant.SMA_20_KEY.value: sma_20,
             MaConstant.SMA_50_KEY.value: sma_50,
             MaConstant.SMA_200_KEY.value: sma_200
         }])

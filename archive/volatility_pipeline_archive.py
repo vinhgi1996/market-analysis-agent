@@ -97,41 +97,6 @@ class VolatilityPipeline:
     # Feature Engineering
     # =========================================================
 
-    def _calculate_log_return(self, df: pd.DataFrame) -> pd.Series:
-        return np.log(df["close"] / df["close"].shift(1))
-
-    def _calculate_rolling_volatility(self, log_return: pd.Series) -> dict[str, pd.Series]:
-        volatility_map = {}
-        for w in [20, 60, 252]:
-            volatility_map[f"vol_{w}d"] = (
-                    log_return
-                    .rolling(w)
-                    .std() * np.sqrt(252)
-            )
-        return volatility_map
-
-    def _calculate_true_range(self, df: pd.DataFrame) -> pd.Series:
-        prev_close = df["close"].shift(1)
-        return pd.concat([
-            df["high"] - df["low"],
-            (df["high"] - prev_close).abs(),
-            (df["low"] - prev_close).abs()
-        ], axis=1).max(axis=1)
-
-    def _calculate_atr_14_r(self, tr: pd.Series) -> pd.Series:
-        return tr.rolling(14).mean()
-
-    def _calculate_parkinson_20d(self, df: pd.DataFrame) -> pd.Series:
-        pk = np.log(df["high"] / df["low"]) ** 2
-        return ((pk.rolling(20).sum()) /(4 * 20 * np.log(2))) ** 0.5 * np.sqrt(252)
-
-    def _calculate_vol_20d_pct(self, df: pd.DataFrame) -> pd.Series:
-        return (
-            df["vol_20d"]
-            .rolling(252)
-            .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1])
-        )
-
     def _backfill_synthesize(self, symbol: str) -> pd.DataFrame:
 
         # Backfill: fetch broad historical set for symbol.
@@ -149,24 +114,38 @@ class VolatilityPipeline:
         df = PandasUtil.cast_object_columns_to_float64(df)
 
         # Log returns
-        df["log_return"] = self._calculate_log_return(df)
+        df["log_return"] = np.log(df["close"] / df["close"].shift(1))
 
         # Rolling volatility
-        vol_map = self._calculate_rolling_volatility(df["log_return"])
-        for col_name, series in vol_map.items():
-            df[col_name] = series
+        for w in [20, 60, 126, 252]:
+            df[f"vol_{w}d"] = (
+                    df["log_return"]
+                    .rolling(w)
+                    .std() * np.sqrt(252)
+            )
 
         # ATR
-        tr = self._calculate_true_range(df)
+        prev_close = df["close"].shift(1)
+        tr = pd.concat([
+            df["high"] - df["low"],
+            (df["high"] - prev_close).abs(),
+            (df["low"] - prev_close).abs()
+        ], axis=1).max(axis=1)
+
         #df["atr_14_w"] = tr.ewm(alpha=1 / 14, adjust=False).mean()
-        df["atr_14_r"] = self._calculate_atr_14_r(tr)
+        df["atr_14_r"] = tr.rolling(14).mean()
         df["atr_14_w"] = self._wilder_atr_df(df, 14)
 
         # Parkinson 20d
-        df["parkinson_20d"] = self._calculate_parkinson_20d(df)
+        pk = np.log(df["high"] / df["low"]) ** 2
+        df["parkinson_20d"] = ((pk.rolling(20).sum()) /(4 * 20 * np.log(2))) ** 0.5 * np.sqrt(252)
 
         # Volatility percentile
-        df["vol_20d_pct"] = self._calculate_vol_20d_pct(df)
+        df["vol_20d_pct"] = (
+            df["vol_20d"]
+            .rolling(252)
+            .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1])
+        )
 
         # Keep only persistence contract columns (order matters for COPY).
         return df[
@@ -175,6 +154,7 @@ class VolatilityPipeline:
                 VolatilityConstant.TIME_KEY.value,
                 VolatilityConstant.VOL_20D.value,
                 VolatilityConstant.VOL_60D.value,
+                VolatilityConstant.VOL_126D.value,
                 VolatilityConstant.VOL_252D.value,
                 VolatilityConstant.ATR_14_R.value,
                 VolatilityConstant.ATR_14_W.value,

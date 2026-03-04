@@ -3,6 +3,7 @@ import logging
 import numpy as np
 from pandas.core.interchange.dataframe_protocol import DataFrame
 
+
 from config.postgre_manager import PostgresManager
 from constant.constants.rsi_constant import RsiConstant
 from constant.constants.volatility_constant import VolatilityConstant
@@ -15,9 +16,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 import pandas as pd
+pd.set_option('display.max_columns', None)
+pd.set_option('display.max_rows', None)
+pd.set_option('display.width', None)
+pd.set_option('display.max_colwidth', None)
 from io import StringIO
 
-class VolatilityPipeline:
+class VolatilityPipelineV2:
 
     def __init__(
             self,
@@ -97,118 +102,82 @@ class VolatilityPipeline:
     # Feature Engineering
     # =========================================================
 
-    def _backfill_synthesize(self, symbol: str) -> pd.DataFrame:
+    def _calculate_log_return(self, df: pd.DataFrame) -> pd.Series:
+        return np.log(df["close"] / df["close"].shift(1))
 
-        # Backfill: fetch broad historical set for symbol.
-        data = PostgresSQLUtil.run_sql(
-            VolatilitySQLQueries.GET_DATA_BY_SYMBOL_OHLVC,
-            (symbol,)
-        )
-
-        # Convert row dict/list into DataFrame for vectorized computation.
-        df = pd.DataFrame(data).copy()
-
-        # Convert object columns to float64 (commonly NUMERIC from DB).
-        # CAUTION: This attempts conversion for all object columns, which may fail
-        # if non-numeric string columns exist in result set.
-        df = PandasUtil.cast_object_columns_to_float64(df)
-
-        # Log returns
-        df["log_return"] = np.log(df["close"] / df["close"].shift(1))
-
-        # Rolling volatility
-        for w in [20, 60, 252]:
-            df[f"vol_{w}d"] = (
-                    df["log_return"]
+    def _calculate_rolling_volatility(self, log_return: pd.Series) -> dict[str, pd.Series]:
+        volatility_map = {}
+        for w in [20, 60, 126, 252]:
+            volatility_map[f"vol_{w}d"] = (
+                    log_return
                     .rolling(w)
                     .std() * np.sqrt(252)
             )
+        return volatility_map
 
-        # ATR
+    def _calculate_true_range(self, df: pd.DataFrame) -> pd.Series:
         prev_close = df["close"].shift(1)
-        tr = pd.concat([
+        return pd.concat([
             df["high"] - df["low"],
             (df["high"] - prev_close).abs(),
             (df["low"] - prev_close).abs()
         ], axis=1).max(axis=1)
 
-        #df["atr_14_w"] = tr.ewm(alpha=1 / 14, adjust=False).mean()
-        df["atr_14_r"] = tr.rolling(14).mean()
-        df["atr_14_w"] = self._wilder_atr_df(df, 14)
+    def _calculate_atr_14_r(self, tr: pd.Series) -> pd.Series:
+        return tr.rolling(14).mean()
 
-        # Parkinson 20d
+    def _calculate_parkinson_20d(self, df: pd.DataFrame) -> pd.Series:
         pk = np.log(df["high"] / df["low"]) ** 2
-        df["parkinson_20d"] = ((pk.rolling(20).sum()) /(4 * 20 * np.log(2))) ** 0.5 * np.sqrt(252)
+        return ((pk.rolling(20).sum()) /(4 * 20 * np.log(2))) ** 0.5 * np.sqrt(252)
 
-        # Volatility percentile
-        df["vol_20d_pct"] = (
+    def _calculate_vol_20d_pct(self, df: pd.DataFrame) -> pd.Series:
+        return (
             df["vol_20d"]
             .rolling(252)
             .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1])
         )
 
-        # Keep only persistence contract columns (order matters for COPY).
-        return df[
-            [
-                VolatilityConstant.SYMBOL_KEY.value,
-                VolatilityConstant.TIME_KEY.value,
-                VolatilityConstant.VOL_20D.value,
-                VolatilityConstant.VOL_60D.value,
-                VolatilityConstant.VOL_252D.value,
-                VolatilityConstant.ATR_14_R.value,
-                VolatilityConstant.ATR_14_W.value,
-                VolatilityConstant.PARKINSON_20D.value,
-                VolatilityConstant.VOL_20D_PCT.value,
-            ]
-        ]
+    def _calculate_wilder_atr_incremental(
+            self,
+            ohlvc_df: pd.DataFrame,
+            volatility_df: pd.DataFrame,
+            n: int = 14
+    ) -> pd.DataFrame:
+        # Need latest bar + previous close to compute TR for the latest bar.
+        if len(ohlvc_df) < 2:
+            raise ValueError("ohlvc_df must contain at least 2 rows for incremental ATR.")
+        if volatility_df.empty:
+            raise ValueError("volatility_df is empty; previous atr_14_w is required.")
 
-    def _incremental_synthesize(self, symbol: str, date: str) -> pd.DataFrame:
-        ohlvc_data = PostgresSQLUtil.run_sql(
-            RsiSQLQueries.GET_DATA_BY_DATE_SYMBOL_OHLVC,
-            (symbol, date)
+        prev_row = ohlvc_df.iloc[-2]
+        last_row = ohlvc_df.iloc[-1]
+
+        high_last = float(last_row[VolatilityConstant.HIGH_KEY.value])
+        low_last = float(last_row[VolatilityConstant.LOW_KEY.value])
+        prev_close = float(prev_row[VolatilityConstant.CLOSE_KEY.value])
+        prev_atr = float(volatility_df.iloc[0][VolatilityConstant.ATR_14_W.value])
+
+        tr_last = max(
+            high_last - low_last,
+            abs(high_last - prev_close),
+            abs(low_last - prev_close),
         )
-        rsi_data = PostgresSQLUtil.run_sql(
-            RsiSQLQueries.GET_DATA_BY_DATE_SYMBOL_RSI,
-            (symbol, date)
-        )
-        if len(ohlvc_data) < 2 or not rsi_data:
-            raise ValueError("Insufficient data for incremental RSI computation")
+        atr_14_w = (prev_atr * (n - 1) + tr_last) / n
 
-        # Extract rows directly (no DataFrame needed)
-        prev_close = float(ohlvc_data[-2]["close"])
-        current_row = ohlvc_data[-1]
-        current_close = float(current_row["close"])
-
-        prev_avg_gain = float(rsi_data[-1]["average_gain_14"])
-        prev_avg_loss = float(rsi_data[-1]["average_loss_14"])
-
-        # Compute delta manually
-        delta = current_close - prev_close
-        gain = max(delta, 0)
-        loss = max(-delta, 0)
-
-        # Wilder smoothing formula
-        avg_gain = (prev_avg_gain * 13 + gain) / 14
-        avg_loss = (prev_avg_loss * 13 + loss) / 14
-
-        # Prevent division by zero
-        if avg_loss == 0:
-            rsi = 100.0
-        else:
-            rs = avg_gain / avg_loss
-            rsi = 100 - (100 / (1 + rs))
-
-        # Build result DataFrame properly
-        result_df = pd.DataFrame([{
-            RsiConstant.SYMBOL_KEY.value: symbol,
-            RsiConstant.TIME_KEY.value: current_row[RsiConstant.TIME_KEY.value],
-            RsiConstant.RSI_14.value: rsi,
-            RsiConstant.AVG_GAIN_14.value: avg_gain,
-            RsiConstant.AVG_LOSS_14.value: avg_loss
+        return pd.DataFrame([{
+            VolatilityConstant.SYMBOL_KEY.value: last_row[VolatilityConstant.SYMBOL_KEY.value],
+            VolatilityConstant.TIME_KEY.value: last_row[VolatilityConstant.TIME_KEY.value],
+            VolatilityConstant.VOL_20D.value: last_row[VolatilityConstant.VOL_20D.value],
+            VolatilityConstant.VOL_60D.value: last_row[VolatilityConstant.VOL_60D.value],
+            VolatilityConstant.VOL_126D.value: last_row[VolatilityConstant.VOL_126D.value],
+            VolatilityConstant.VOL_252D.value: last_row[VolatilityConstant.VOL_252D.value],
+            VolatilityConstant.ATR_14_R.value: last_row[VolatilityConstant.ATR_14_R.value],
+            VolatilityConstant.ATR_14_W.value: atr_14_w,
+            VolatilityConstant.PARKINSON_20D.value: last_row[VolatilityConstant.PARKINSON_20D.value],
+            VolatilityConstant.VOL_20D_PCT.value: last_row[VolatilityConstant.VOL_20D_PCT.value],
         }])
-        return result_df
 
-    def _wilder_atr_df(self,df, n=14):
+    def _calculate_wilder_atr_backfill(self,df, n=14):
         high = df["high"].to_numpy()
         low = df["low"].to_numpy()
         close = df["close"].to_numpy()
@@ -237,6 +206,104 @@ class VolatilityPipeline:
 
         return atr
 
+    def _backfill_synthesize(self, symbol: str) -> pd.DataFrame:
+
+        # Backfill: fetch broad historical set for symbol.
+        data = PostgresSQLUtil.run_sql(
+            VolatilitySQLQueries.GET_DATA_BY_SYMBOL_OHLVC,
+            (symbol,)
+        )
+
+        # Convert row dict/list into DataFrame for vectorized computation.
+        df = pd.DataFrame(data).copy()
+
+        # Convert object columns to float64 (commonly NUMERIC from DB).
+        # CAUTION: This attempts conversion for all object columns, which may fail
+        # if non-numeric string columns exist in result set.
+        df = PandasUtil.cast_object_columns_to_float64(df)
+
+        # Log returns
+        df["log_return"] = self._calculate_log_return(df)
+
+        # Rolling volatility
+        vol_map = self._calculate_rolling_volatility(df["log_return"])
+        for col_name, series in vol_map.items():
+            df[col_name] = series
+
+        # ATR
+        tr = self._calculate_true_range(df)
+
+        df["atr_14_r"] = self._calculate_atr_14_r(tr)
+        df["atr_14_w"] = self._calculate_wilder_atr_backfill(df, 14)
+
+        # Parkinson 20d
+        df["parkinson_20d"] = self._calculate_parkinson_20d(df)
+
+        # Volatility percentile 20d (annualized)
+        df["vol_20d_pct"] = self._calculate_vol_20d_pct(df)
+
+        # Keep only persistence contract columns (order matters for COPY).
+        return df[
+            [
+                VolatilityConstant.SYMBOL_KEY.value,
+                VolatilityConstant.TIME_KEY.value,
+                VolatilityConstant.VOL_20D.value,
+                VolatilityConstant.VOL_60D.value,
+                VolatilityConstant.VOL_126D.value,
+                VolatilityConstant.VOL_252D.value,
+                VolatilityConstant.ATR_14_R.value,
+                VolatilityConstant.ATR_14_W.value,
+                VolatilityConstant.PARKINSON_20D.value,
+                VolatilityConstant.VOL_20D_PCT.value,
+            ]
+        ]
+
+    def _incremental_synthesize(self, symbol: str, date: str) -> pd.DataFrame:
+        ohlvc_data = PostgresSQLUtil.run_sql(
+            VolatilitySQLQueries.GET_DATA_BY_DATE_SYMBOL_OHLVC,
+            (symbol, date)
+        )
+        volatility_data = PostgresSQLUtil.run_sql(
+            VolatilitySQLQueries.GET_DATA_BY_DATE_SYMBOL_ATR_14_W,
+            (symbol, date)
+        )
+        if len(ohlvc_data) < 253 or not volatility_data:
+            raise ValueError("Insufficient data for incremental computation")
+
+        # Convert row dict/list into DataFrame for vectorized computation.
+        ohlvc_df = pd.DataFrame(ohlvc_data).copy()
+        volatility_df = pd.DataFrame(volatility_data).copy()
+
+        # Convert object columns to float64 (commonly NUMERIC from DB).
+        # CAUTION: This attempts conversion for all object columns, which may fail
+        # if non-numeric string columns exist in result set.
+        ohlvc_df = PandasUtil.cast_object_columns_to_float64(ohlvc_df)
+        volatility_df = PandasUtil.cast_object_columns_to_float64(volatility_df)
+
+        # Log returns
+        ohlvc_df["log_return"] = self._calculate_log_return(ohlvc_df)
+
+        # Rolling volatility
+        vol_map = self._calculate_rolling_volatility(ohlvc_df["log_return"])
+        for col_name, series in vol_map.items():
+            ohlvc_df[col_name] = series
+
+        # Volatility percentile 20d (annualized)
+        ohlvc_df["vol_20d_pct"] = self._calculate_vol_20d_pct(ohlvc_df)
+
+        parkinson_ohlvc_df = ohlvc_df.tail(20).copy().reset_index(drop=True)
+
+        # Parkinson 20d
+        parkinson_ohlvc_df["parkinson_20d"] = self._calculate_parkinson_20d(parkinson_ohlvc_df)
+
+        # ATR 14 days standard rolling
+        tr = self._calculate_true_range(parkinson_ohlvc_df)
+        parkinson_ohlvc_df["atr_14_r"] = self._calculate_atr_14_r(tr)
+        # ATR 14 days wilder smoothing
+        atr_14_w = parkinson_ohlvc_df.tail(2).copy().reset_index(drop=True)
+        final_df = self._calculate_wilder_atr_incremental(atr_14_w,volatility_df, 14)
+
+        return final_df
 
     # =========================================================
     # Persistence

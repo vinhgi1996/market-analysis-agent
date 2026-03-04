@@ -55,7 +55,7 @@ class MovingAverageSQLQueries(str, Enum):
     COPY_MA_DATA = (
                                 """
                                 COPY moving_average
-                                (symbol, time, sma_50, sma_200)
+                                (symbol, time, sma_20, sma_50, sma_200)
                                 FROM STDIN WITH (FORMAT CSV)
                                 """
     )

@@ -2,9 +2,9 @@ import time
 
 import numpy as np
 
-from business_logic.moving_average_pipeline_v1 import MovingAveragePipeline
-from business_logic.rsi_pipeline_v1 import RsiPipeline
-from business_logic.volatility_pipeline_v1 import VolatilityPipeline
+from business_logic.stock_ohlvc.momentum_pipeline_v1 import MomentumPipeline
+from business_logic.stock_ohlvc.moving_average_pipeline_v1 import MovingAveragePipeline
+from business_logic.stock_ohlvc.volatility_pipeline_v2 import VolatilityPipelineV2
 from config.postgre_manager import PostgresManager
 from constant.constants.rsi_constant import RsiConstant
 from constant.constants.volatility_constant import VolatilityConstant
@@ -287,20 +287,64 @@ def volatility_backfill_synthesize(symbol: str) -> pd.DataFrame:
         ]
     ]
 
+def volatility_incremental_synthesize(self, symbol: str, date: str) -> pd.DataFrame:
+    ohlvc_data = PostgresSQLUtil.run_sql(
+        VolatilitySQLQueries.GET_DATA_BY_DATE_SYMBOL_OHLVC,
+        (symbol, date)
+    )
+    volatility_data = PostgresSQLUtil.run_sql(
+        VolatilitySQLQueries.GET_DATA_BY_DATE_SYMBOL_ATR_14_W,
+        (symbol, date)
+    )
+    if len(ohlvc_data) < 253 or not volatility_data:
+        raise ValueError("Insufficient data for incremental computation")
+
+    # Convert row dict/list into DataFrame for vectorized computation.
+    ohlvc_df = pd.DataFrame(ohlvc_data).copy()
+    volatility_df = pd.DataFrame(volatility_data).copy()
+
+    # Convert object columns to float64 (commonly NUMERIC from DB).
+    # CAUTION: This attempts conversion for all object columns, which may fail
+    # if non-numeric string columns exist in result set.
+    ohlvc_df = PandasUtil.cast_object_columns_to_float64(ohlvc_df)
+    volatility_df = PandasUtil.cast_object_columns_to_float64(volatility_df)
+
+    # Log returns
+    ohlvc_df["log_return"] = self._calculate_log_return(ohlvc_df)
+
+    # Rolling volatility
+    vol_map = self._calculate_rolling_volatility(ohlvc_df["log_return"])
+    for col_name, series in vol_map.items():
+        ohlvc_df[col_name] = series
+
+    # Volatility percentile 20d (annualized)
+    ohlvc_df["vol_20d_pct"] = self._calculate_vol_20d_pct(ohlvc_df)
+
+    parkinson_ohlvc_df = ohlvc_df.tail(20).copy()
+
+
+
+    # Build result DataFrame properly
+    result_df = pd.DataFrame([{
+        RsiConstant.SYMBOL_KEY.value: symbol,
+
+    }])
+    return result_df
+
 
 if __name__ == "__main__":
     #momentum_ohlcv()
     # pipeline = MomentumPipeline(max_workers=5,
     #                             symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
-    #                             mode="incremental",
-    #                             current_time='2026-02-26')
+    #                             mode="backfill",
+    #                             current_time='2026-01-03')
     # pipeline.run_all_parallel()
 
-    # pipeline = MovingAveragePipeline(max_workers=5,
-    #                             symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
-    #                             mode="incremental",
-    #                             current_time='2026-02-26')
-    # pipeline.run_all_parallel()
+    pipeline = MovingAveragePipeline(max_workers=5,
+                                symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+                                mode="backfill",
+                                current_time='2026-01-03')
+    pipeline.run_all_parallel()
     # start = time.perf_counter()
     # pipeline = RsiPipeline(max_workers=4,
     #                        symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
@@ -310,14 +354,23 @@ if __name__ == "__main__":
     # end = time.perf_counter()
     # print(f"Total execution time: {end - start:.6f}
 
-    start = time.perf_counter()
-    pipeline = VolatilityPipeline(max_workers=4,
-                           symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
-                           mode="backfill",
-                           current_time='2023-01-02')
-    pipeline.run_all_parallel()
-    end = time.perf_counter()
-    print(f"Total execution time: {end - start:.6f}")
+    # start = time.perf_counter()
+    # pipeline = VolatilityPipeline(max_workers=4,
+    #                        symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                        mode="backfill",
+    #                        current_time='2023-01-02')
+    # pipeline.run_all_parallel()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
+
+    # start = time.perf_counter()
+    # pipeline = VolatilityPipelineV2(max_workers=4,
+    #                               symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                               mode="incremental",
+    #                               current_time='2026-02-26')
+    # pipeline.run_all_parallel()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
     
 
 

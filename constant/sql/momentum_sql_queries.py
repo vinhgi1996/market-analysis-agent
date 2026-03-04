@@ -28,6 +28,7 @@ class MomentumSQLQueries(str, Enum):
         "symbol, "
         "time, "
         "close, "
+        "LAG(close, 21)  OVER w AS close_21, "
         "LAG(close, 63)  OVER w AS close_63, "
         "LAG(close, 126) OVER w AS close_126, "
         "LAG(close, 252) OVER w AS close_252 "
@@ -48,6 +49,7 @@ class MomentumSQLQueries(str, Enum):
             "symbol, "
             "time, "
             "close, "
+            "LAG(close, 21)  OVER w AS close_21, "
             "LAG(close, 63)  OVER w AS close_63, "
             "LAG(close, 126) OVER w AS close_126, "
             "LAG(close, 252) OVER w AS close_252 "
@@ -66,7 +68,7 @@ class MomentumSQLQueries(str, Enum):
     COPY_MOMENTUM_DATA = (
                                 """
                                 COPY momentum
-                                (symbol, time, m_3, m_6, m_12, m_composite)
+                                (symbol, time, m_1 , m_3, m_6, m_12)
                                 FROM STDIN WITH (FORMAT CSV)
                                 """
     )

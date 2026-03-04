@@ -16,10 +16,12 @@ class MomentumConstant(Enum):
     SYMBOL_KEY = "symbol"
     TIME_KEY = "time"
     CLOSE_KEY = "close"
+    CLOSE_21_KEY = "close_21"
     CLOSE_63_KEY = "close_63"
     CLOSE_126_KEY = "close_126"
     CLOSE_252_KEY = "close_252"
 
+    M_1_KEY = "m_1"
     M_3_KEY = "m_3"
     M_6_KEY = "m_6"
     M_12_KEY = "m_12"
@@ -27,10 +29,6 @@ class MomentumConstant(Enum):
 
     OBJECT_DTYPE = "object"
     FLOAT64_DTYPE = "float64"
-
-    WINDOW_3 = 63
-    WINDOW_6 = 126
-    WINDOW_12 = 252
 
     ONE = 1
     COMPOSITE_DIVISOR = 3

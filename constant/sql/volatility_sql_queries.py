@@ -32,18 +32,18 @@ class VolatilitySQLQueries(str, Enum):
     GET_DATA_BY_DATE_SYMBOL_OHLVC = (
         "SELECT * "
         "FROM ( "
-            "SELECT symbol, time, close FROM ohlcv_prices "
+            "SELECT symbol, time, high, low, close FROM ohlcv_prices "
             "WHERE symbol = %s "
             "AND time < (%s::date + INTERVAL '1 day') "
             "ORDER BY time DESC "
-            "LIMIT 2 "
+            "LIMIT 272 "
         ") sub "
         "ORDER BY time ASC "
     )
 
-    GET_DATA_BY_DATE_SYMBOL_RSI = (
-        "SELECT symbol, time, average_gain_14, average_loss_14 "
-        "FROM relative_strength_index "
+    GET_DATA_BY_DATE_SYMBOL_ATR_14_W = (
+        "SELECT symbol, time, atr_14_w "
+        "FROM volatility "
         "WHERE symbol = %s "
         "AND time < (%s::date + INTERVAL '1 day') "
         "ORDER BY time DESC "

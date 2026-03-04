@@ -128,7 +128,10 @@ class MomentumPipeline:
             if df[col].dtype == MomentumConstant.OBJECT_DTYPE.value
         })
 
-        # Momentum features based on lagged closes (63/126/252 trading days).
+        # Momentum features based on lagged closes (21/63/126/252 trading days).
+        df[MomentumConstant.M_1_KEY.value] = (
+                df[MomentumConstant.CLOSE_KEY.value] / df[MomentumConstant.CLOSE_21_KEY.value] - MomentumConstant.ONE.value
+        )
         df[MomentumConstant.M_3_KEY.value] = (
             df[MomentumConstant.CLOSE_KEY.value] / df[MomentumConstant.CLOSE_63_KEY.value] - MomentumConstant.ONE.value
         )
@@ -140,19 +143,19 @@ class MomentumPipeline:
         )
 
         # Equal-weight composite momentum score.
-        df[MomentumConstant.M_COMPOSITE_KEY.value] = (
-            df[MomentumConstant.M_3_KEY.value] + df[MomentumConstant.M_6_KEY.value] + df[MomentumConstant.M_12_KEY.value]
-        ) / MomentumConstant.COMPOSITE_DIVISOR.value
+        # df[MomentumConstant.M_COMPOSITE_KEY.value] = (
+        #     df[MomentumConstant.M_3_KEY.value] + df[MomentumConstant.M_6_KEY.value] + df[MomentumConstant.M_12_KEY.value]
+        # ) / MomentumConstant.COMPOSITE_DIVISOR.value
 
         # Keep only persistence contract columns (order matters for COPY).
         return df[
             [
                 MomentumConstant.SYMBOL_KEY.value,
                 MomentumConstant.TIME_KEY.value,
+                MomentumConstant.M_1_KEY.value,
                 MomentumConstant.M_3_KEY.value,
                 MomentumConstant.M_6_KEY.value,
                 MomentumConstant.M_12_KEY.value,
-                MomentumConstant.M_COMPOSITE_KEY.value,
             ]
         ]
 
