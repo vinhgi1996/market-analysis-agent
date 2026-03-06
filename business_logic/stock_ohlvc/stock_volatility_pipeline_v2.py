@@ -1,14 +1,11 @@
 import logging
 
 import numpy as np
-from pandas.core.interchange.dataframe_protocol import DataFrame
-
 
 from config.postgre_manager import PostgresManager
-from constant.constants.rsi_constant import RsiConstant
-from constant.constants.volatility_constant import VolatilityConstant
-from constant.sql.rsi_sql_queries import RsiSQLQueries
-from constant.sql.volatility_sql_queries import VolatilitySQLQueries
+from constant.constants.stock.stock_rsi_constant import RsiConstant
+from constant.constants.stock.stock_volatility_constant import VolatilityConstant
+from constant.sql.stock.stock_volatility_sql_queries import VolatilitySQLQueries
 from util.pandas_util import PandasUtil
 from util.postgre_sql import PostgresSQLUtil
 # Thread pool for running symbol jobs concurrently.
@@ -54,25 +51,25 @@ class VolatilityPipelineV2:
 
         try:
             self.logger.info(
-                RsiConstant.LOG_START.value.format(symbol=symbol)
+                VolatilityConstant.LOG_START.value.format(symbol=symbol)
             )
 
             df = None
 
-            if self.mode == RsiConstant.MODE_BACKFILL.value:
+            if self.mode == VolatilityConstant.MODE_BACKFILL.value:
                 df = self._backfill_synthesize(symbol)
-            elif self.mode == RsiConstant.MODE_INCREMENTAL.value:
+            elif self.mode == VolatilityConstant.MODE_INCREMENTAL.value:
                 df = self._incremental_synthesize(symbol,self.current_time)
             # Persist dataframe (delete existing range first, then bulk copy).
             self._store(df, self.current_time)
 
             self.logger.info(
-                RsiConstant.LOG_FINISH.value.format(symbol=symbol)
+                VolatilityConstant.LOG_FINISH.value.format(symbol=symbol)
             )
         except Exception as e:
             # Error is logged, not re-raised -> job continues for other symbols.
             self.logger.error(
-                RsiConstant.LOG_ERROR.value.format(symbol=symbol, error=e)
+                VolatilityConstant.LOG_ERROR.value.format(symbol=symbol, error=e)
             )
 
     def run_all_parallel(self):
@@ -130,10 +127,17 @@ class VolatilityPipelineV2:
         pk = np.log(df["high"] / df["low"]) ** 2
         return ((pk.rolling(20).sum()) /(4 * 20 * np.log(2))) ** 0.5 * np.sqrt(252)
 
-    def _calculate_vol_20d_pct(self, df: pd.DataFrame) -> pd.Series:
+    def _calculate_vol_20d_pct_252(self, df: pd.DataFrame) -> pd.Series:
         return (
             df["vol_20d"]
             .rolling(252)
+            .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1])
+        )
+
+    def _calculate_vol_20d_pct_126(self, df: pd.DataFrame) -> pd.Series:
+        return (
+            df["vol_20d"]
+            .rolling(126)
             .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1])
         )
 
@@ -174,7 +178,8 @@ class VolatilityPipelineV2:
             VolatilityConstant.ATR_14_R.value: last_row[VolatilityConstant.ATR_14_R.value],
             VolatilityConstant.ATR_14_W.value: atr_14_w,
             VolatilityConstant.PARKINSON_20D.value: last_row[VolatilityConstant.PARKINSON_20D.value],
-            VolatilityConstant.VOL_20D_PCT.value: last_row[VolatilityConstant.VOL_20D_PCT.value],
+            VolatilityConstant.VOL_20D_PCT_126.value: last_row[VolatilityConstant.VOL_20D_PCT_126.value],
+            VolatilityConstant.VOL_20D_PCT_252.value: last_row[VolatilityConstant.VOL_20D_PCT_252.value],
         }])
 
     def _calculate_wilder_atr_backfill(self,df, n=14):
@@ -239,8 +244,11 @@ class VolatilityPipelineV2:
         # Parkinson 20d
         df["parkinson_20d"] = self._calculate_parkinson_20d(df)
 
-        # Volatility percentile 20d (annualized)
-        df["vol_20d_pct"] = self._calculate_vol_20d_pct(df)
+        # Volatility percentile 20d (annualized - 126 days)
+        df["vol_20d_pct_126"] = self._calculate_vol_20d_pct_126(df)
+
+        # Volatility percentile 20d (annualized - 252 days)
+        df["vol_20d_pct_252"] = self._calculate_vol_20d_pct_252(df)
 
         # Keep only persistence contract columns (order matters for COPY).
         return df[
@@ -254,7 +262,8 @@ class VolatilityPipelineV2:
                 VolatilityConstant.ATR_14_R.value,
                 VolatilityConstant.ATR_14_W.value,
                 VolatilityConstant.PARKINSON_20D.value,
-                VolatilityConstant.VOL_20D_PCT.value,
+                VolatilityConstant.VOL_20D_PCT_126.value,
+                VolatilityConstant.VOL_20D_PCT_252.value,
             ]
         ]
 
@@ -288,8 +297,11 @@ class VolatilityPipelineV2:
         for col_name, series in vol_map.items():
             ohlvc_df[col_name] = series
 
-        # Volatility percentile 20d (annualized)
-        ohlvc_df["vol_20d_pct"] = self._calculate_vol_20d_pct(ohlvc_df)
+        # Volatility percentile 20d (annualized 252 days)
+        ohlvc_df["vol_20d_pct_252"] = self._calculate_vol_20d_pct_252(ohlvc_df)
+
+        # Volatility percentile 20d (annualized 252 days)
+        ohlvc_df["vol_20d_pct_126"] = self._calculate_vol_20d_pct_126(ohlvc_df)
 
         parkinson_ohlvc_df = ohlvc_df.tail(20).copy().reset_index(drop=True)
 

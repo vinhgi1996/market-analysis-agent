@@ -2,16 +2,19 @@ import time
 
 import numpy as np
 
-from business_logic.stock_ohlvc.momentum_pipeline_v1 import MomentumPipeline
-from business_logic.stock_ohlvc.moving_average_pipeline_v1 import MovingAveragePipeline
-from business_logic.stock_ohlvc.volatility_pipeline_v2 import VolatilityPipelineV2
+from business_logic.analysis.vnindex_regime_filter import VnIndexRegimeFilterPipeline
+from business_logic.stock_ohlvc.stock_volatility_pipeline_v2 import VolatilityPipelineV2
+from business_logic.vnindex_ohlvc.vnindex_drawdown_pipeline_v1 import VnIndexDrawdownPipeline
+from business_logic.vnindex_ohlvc.vnindex_momentum_pipeline_v1 import VnIndexMomentumPipeline
+from business_logic.vnindex_ohlvc.vnindex_moving_average_pipeline_v1 import VnIndexMovingAveragePipeline
+from business_logic.vnindex_ohlvc.vnindex_volatility_pipeline_v1 import VnIndexVolatilityPipeline
 from config.postgre_manager import PostgresManager
-from constant.constants.rsi_constant import RsiConstant
-from constant.constants.volatility_constant import VolatilityConstant
-from constant.sql.momentum_sql_queries import MomentumSQLQueries
-from constant.sql.rsi_sql_queries import RsiSQLQueries
+from constant.constants.stock.stock_rsi_constant import RsiConstant
+from constant.constants.stock.stock_volatility_constant import VolatilityConstant
+from constant.sql.stock.stock_momentum_sql_queries import MomentumSQLQueries
+from constant.sql.stock.stock_rsi_sql_queries import RsiSQLQueries
 from constant.sql.sql_queries import SQLQueries
-from constant.sql.volatility_sql_queries import VolatilitySQLQueries
+from constant.sql.stock.stock_volatility_sql_queries import VolatilitySQLQueries
 from util.pandas_util import PandasUtil
 from util.postgre_sql import PostgresSQLUtil
 import pandas as pd
@@ -134,7 +137,7 @@ def synthesize_momentum_metrics(symbol:str)->pd.DataFrame:
     # --------------------------------------------------
     # Data retrieving
     # --------------------------------------------------
-    data =  PostgresSQLUtil.run_sql(MomentumSQLQueries.GET_DATA_BY_DATE_AND_SYMBOL,(symbol,))
+    data =  PostgresSQLUtil.run_sql(MomentumSQLQueries.GET_DATA_BY_DATE_SYMBOL,(symbol,))
     # --------------------------------------------------
     # Ensure pandas DataFrame
     # --------------------------------------------------
@@ -334,17 +337,21 @@ def volatility_incremental_synthesize(self, symbol: str, date: str) -> pd.DataFr
 
 if __name__ == "__main__":
     #momentum_ohlcv()
+
+
     # pipeline = MomentumPipeline(max_workers=5,
     #                             symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
     #                             mode="backfill",
-    #                             current_time='2026-01-03')
+    #                             current_time='2023-01-03')
     # pipeline.run_all_parallel()
 
-    pipeline = MovingAveragePipeline(max_workers=5,
-                                symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
-                                mode="backfill",
-                                current_time='2026-01-03')
-    pipeline.run_all_parallel()
+    # pipeline = MovingAveragePipeline(max_workers=5,
+    #                             symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                             mode="backfill",
+    #                             current_time='2023-01-03')
+    # pipeline.run_all_parallel()
+
+
     # start = time.perf_counter()
     # pipeline = RsiPipeline(max_workers=4,
     #                        symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
@@ -366,11 +373,55 @@ if __name__ == "__main__":
     # start = time.perf_counter()
     # pipeline = VolatilityPipelineV2(max_workers=4,
     #                               symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
-    #                               mode="incremental",
-    #                               current_time='2026-02-26')
+    #                               mode="backfill",
+    #                               current_time='2023-01-03')
     # pipeline.run_all_parallel()
     # end = time.perf_counter()
     # print(f"Total execution time: {end - start:.6f}")
+
+
+    # start = time.perf_counter()
+    # pipeline = VnIndexMomentumPipeline(max_workers=4,
+    #                               mode="backfill",
+    #                               current_time='2023-01-03')
+    # pipeline.run()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
+
+
+    # start = time.perf_counter()
+    # pipeline = VnIndexMovingAveragePipeline(max_workers=4,
+    #                               mode="backfill",
+    #                               current_time='2023-01-03')
+    # pipeline.run()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
+
+    # start = time.perf_counter()
+    # pipeline = VnIndexVolatilityPipeline(max_workers=4,
+    #                                         mode="backfill",
+    #                                         current_time='2023-01-03')
+    # pipeline.run()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
+
+    # start = time.perf_counter()
+    # pipeline = VnIndexDrawdownPipeline(max_workers=4,
+    #                                         mode="incremental",
+    #                                         current_time='2026-03-06')
+    # pipeline.run()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
+
+    start = time.perf_counter()
+    pipeline = VnIndexRegimeFilterPipeline(max_workers=4,
+                                       mode="backfill",
+                                       current_time='2023-01-03')
+    pipeline.run()
+    end = time.perf_counter()
+    print(f"Total execution time: {end - start:.6f}")
+
+
     
 
 

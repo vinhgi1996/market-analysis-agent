@@ -447,8 +447,8 @@ def run_ingest():
     print("Ingestion started.")
     #symbol_by_industry()
     #symbol_by_exchange()
-    ohlvc()
-    #vnindex()
+    #ohlvc()
+    vnindex()
 
 
 if __name__ == "__main__":

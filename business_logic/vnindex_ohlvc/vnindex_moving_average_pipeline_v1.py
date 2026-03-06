@@ -3,8 +3,8 @@ import logging
 import numpy as np
 
 from config.postgre_manager import PostgresManager
-from constant.constants.moving_average_constant import MaConstant
-from constant.sql.moving_average_sql_queries import MovingAverageSQLQueries
+from constant.constants.vnindex.vnindex_moving_average_constant import MaConstant
+from constant.sql.vnindex.vnindex_moving_average_sql_queries import MovingAverageSQLQueries
 from util.postgre_sql import PostgresSQLUtil
 # Thread pool for running symbol jobs concurrently.
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from io import StringIO
 
-class MovingAveragePipeline:
+class VnIndexMovingAveragePipeline:
 
     def __init__(
             self,
@@ -41,65 +41,41 @@ class MovingAveragePipeline:
     # Public API
     # =========================================================
 
-    def run(self, symbol: str):
+    def run(self):
 
         try:
             self.logger.info(
-                MaConstant.LOG_START.value.format(symbol=symbol)
+                MaConstant.LOG_START.value
             )
 
             df = None
 
             if self.mode == MaConstant.MODE_BACKFILL.value:
-                df = self._backfill_synthesize(symbol)
+                df = self._backfill_synthesize()
             elif self.mode == MaConstant.MODE_INCREMENTAL.value:
-                df = self._incremental_synthesize(symbol,self.current_time)
+                df = self._incremental_synthesize(self.current_time)
 
             # Persist dataframe (delete existing range first, then bulk copy).
             self._store(df, self.current_time)
 
             self.logger.info(
-                MaConstant.LOG_FINISH.value.format(symbol=symbol)
+                MaConstant.LOG_FINISH.value
             )
         except Exception as e:
             # Error is logged, not re-raised -> job continues for other symbols.
             self.logger.error(
-                MaConstant.LOG_ERROR.value.format(symbol=symbol, error=e)
+                MaConstant.LOG_ERROR.value
             )
-
-    def run_all_parallel(self):
-        """
-        Run pipeline for every symbol returned by `self.symbol_queries`
-        using ThreadPoolExecutor.
-        """
-        # NOTE: This string appears to have encoding artifacts in current source.
-        self.logger.info(MaConstant.LOG_PARALLEL_START.value)
-
-        # Expect list[dict], each dict has at least key: "symbol".
-        symbols = PostgresSQLUtil.run_sql(self.symbol_queries)
-        symbol_list = [s[MaConstant.SYMBOL_KEY.value] for s in symbols]
-
-        # Thread pool dispatch: each symbol runs independently.
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = [executor.submit(self.run, symbol) for symbol in symbol_list]
-
-            # Consume futures and re-surface unexpected thread exceptions.
-            for future in as_completed(futures):
-                future.result()
-
-                # NOTE: This string appears to have encoding artifacts in current source.
-        self.logger.info(MaConstant.LOG_PARALLEL_FINISH.value)
 
     # =========================================================
     # Feature Engineering
     # =========================================================
 
-    def _backfill_synthesize(self, symbol: str) -> pd.DataFrame:
+    def _backfill_synthesize(self) -> pd.DataFrame:
 
         # Backfill: fetch broad historical set for symbol.
         data = PostgresSQLUtil.run_sql(
-            MovingAverageSQLQueries.GET_DATA_BY_SYMBOL,
-            (symbol,)
+            MovingAverageSQLQueries.GET_DATA,
         )
 
         # Convert row dict/list into DataFrame for vectorized computation.
@@ -115,21 +91,9 @@ class MovingAveragePipeline:
         })
 
         # Simple moving average features based on lagged closes (20/50/200/ trading days).
-        df[MaConstant.SMA_20_KEY.value] = (
+        df[MaConstant.SMA_150_KEY.value] = (
             df[MaConstant.CLOSE_KEY.value]
-            .rolling(MaConstant.SMA_20_WINDOW.value)
-            .mean()
-            .shift(1)
-        )
-        df[MaConstant.SMA_50_KEY.value] = (
-            df[MaConstant.CLOSE_KEY.value]
-            .rolling(MaConstant.SMA_50_WINDOW.value)
-            .mean()
-            .shift(1)
-        )
-        df[MaConstant.SMA_200_KEY.value] = (
-            df[MaConstant.CLOSE_KEY.value]
-            .rolling(MaConstant.SMA_200_WINDOW.value)
+            .rolling(MaConstant.SMA_150_WINDOW.value)
             .mean()
             .shift(1)
         )
@@ -137,19 +101,17 @@ class MovingAveragePipeline:
         # Keep only persistence contract columns (order matters for COPY).
         return df[
             [
-                MaConstant.SYMBOL_KEY.value,
                 MaConstant.TIME_KEY.value,
-                MaConstant.SMA_20_KEY.value,
-                MaConstant.SMA_50_KEY.value,
-                MaConstant.SMA_200_KEY.value,
+                MaConstant.SMA_150_KEY.value,
+
             ]
         ]
 
-    def _incremental_synthesize(self, symbol: str, date: str) -> pd.DataFrame:
+    def _incremental_synthesize(self,date: str) -> pd.DataFrame:
 
         data = PostgresSQLUtil.run_sql(
-            MovingAverageSQLQueries.GET_DATA_BY_DATE_SYMBOL,
-            (symbol,date)
+            MovingAverageSQLQueries.GET_DATA_BY_DATE,
+            (date,)
         )
 
         # Convert row dict/list into DataFrame for vectorized computation.
@@ -170,16 +132,13 @@ class MovingAveragePipeline:
         close_values = df[MaConstant.CLOSE_KEY.value].values
         n = len(close_values)
 
-        sma_20 = close_values[-21:-1].mean() if n >= 21 else np.nan
-        sma_50 = close_values[-51:-1].mean() if n >= 51 else np.nan
-        sma_200 = close_values[-201:-1].mean() if n >= 201 else np.nan
+        sma_20 = close_values[-151:-1].mean() if n >= 151 else np.nan
 
         return pd.DataFrame([{
             MaConstant.SYMBOL_KEY.value: last_row[MaConstant.SYMBOL_KEY.value],
             MaConstant.TIME_KEY.value: last_row[MaConstant.TIME_KEY.value],
-            MaConstant.SMA_20_KEY.value: sma_20,
-            MaConstant.SMA_50_KEY.value: sma_50,
-            MaConstant.SMA_200_KEY.value: sma_200
+            MaConstant.SMA_150_KEY.value: sma_20,
+
         }])
 
 
@@ -198,8 +157,6 @@ class MovingAveragePipeline:
         if df.empty:
             return
 
-        # Assumes dataframe contains a single symbol only.
-        symbol = df[MaConstant.SYMBOL_KEY.value].iloc[0]
 
         with PostgresManager.get_sync_connection() as conn:
             with conn.cursor() as cursor:
@@ -213,7 +170,7 @@ class MovingAveragePipeline:
                 # For incremental: date is new boundary -> narrow cleanup.
                 cursor.execute(
                     MovingAverageSQLQueries.DELETE_MA_DATA,
-                    (symbol, date)
+                    (date,)
                 )
 
                 # Prepare CSV in-memory buffer for COPY command.

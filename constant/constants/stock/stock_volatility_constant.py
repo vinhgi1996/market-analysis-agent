@@ -27,6 +27,7 @@ class VolatilityConstant(Enum):
     ATR_14_R = "atr_14_r"
     ATR_14_W = "atr_14_w"
     PARKINSON_20D = "parkinson_20d"
-    VOL_20D_PCT = "vol_20d_pct"
+    VOL_20D_PCT_126 = "vol_20d_pct_126"
+    VOL_20D_PCT_252 = "vol_20d_pct_252"
 
     SET_SYNC_COMMIT_OFF = "SET LOCAL synchronous_commit = OFF;"

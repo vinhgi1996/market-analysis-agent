@@ -1,9 +1,9 @@
 # Database connection/context manager for synchronous Postgres operations.                                                                                                        
 from config.postgre_manager import PostgresManager
-from constant.constants.momentum_constant import MomentumConstant
+from constant.constants.stock.stock_momentum_constant import MomentumConstant
 
 # SQL templates specific to momentum pipeline operations.
-from constant.sql.momentum_sql_queries import MomentumSQLQueries
+from constant.sql.stock.stock_momentum_sql_queries import MomentumSQLQueries
 
 # Utility wrapper to execute SQL and return Python-friendly results.
 from util.postgre_sql import PostgresSQLUtil
@@ -16,7 +16,7 @@ import pandas as pd
 from io import StringIO
 
 
-class MomentumPipeline:
+class StockMomentumPipeline:
     """
     Momentum pipeline:
     1) Pull price snapshots (depends on mode: backfill/incremental)

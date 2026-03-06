@@ -1,7 +1,7 @@
 """
 constant/sql_queries.py
 
-This module centralizes all Moving Average pipeline SQL queries used in the project.
+This module centralizes all Vnindex Drawdown pipeline SQL queries used in the project.
 - Each query is defined as an Enum member.
 - The Enum approach provides:
     1. Strong names for queries to prevent typos
@@ -12,9 +12,9 @@ This module centralizes all Moving Average pipeline SQL queries used in the proj
 
 from enum import Enum
 
-class MovingAverageSQLQueries(str, Enum):
+class DrawdownSQLQueries(str, Enum):
     """
-    Enum for all Moving average pipeline SQL queries in the project.
+    Enum for all Vnindex Drawdown pipeline SQL queries in the project.
 
     Each member's value is the actual SQL string. Use `.value` when passing to
     database execution functions.
@@ -23,39 +23,30 @@ class MovingAverageSQLQueries(str, Enum):
     # -----------------------------
     # Query to get close data of a specific symbol of time ( the unit is trading session )
     # -----------------------------
-    GET_DATA_BY_SYMBOL = (
-        "SELECT "
-        "symbol, "
-        "time, "
-        "close "
-        "FROM ohlcv_prices "
-        "WHERE symbol = %s "
-        "ORDER BY time ASC"
-    )
-
-    GET_DATA_BY_DATE_SYMBOL = (
-        "SELECT * "
-        "FROM ( "
-            "SELECT * "
-            "FROM ohlcv_prices "
-            "WHERE symbol = %s "
-            "AND time < (%s::date + INTERVAL '1 day') "
-            "ORDER BY time DESC "
-            "LIMIT 201 "
-        ") sub "
+    GET_DATA = (
+        "SELECT time, close FROM vnindex_history "
         "ORDER BY time ASC "
     )
 
-    DELETE_MA_DATA = (
-        "DELETE FROM moving_average "
-        "WHERE symbol = %s "
-        "AND time >= %s "
+    GET_DATA_BY_DATE= (
+        "SELECT * "
+        "FROM ( "
+            "SELECT time, close FROM vnindex_history "
+            "WHERE time < (%s::date + INTERVAL '1 day') "
+            "ORDER BY time DESC "
+            "LIMIT 40"
+        ") sub "
+        "ORDER BY time ASC "
+    )
+    DELETE_DRAWDOWN_DATA = (
+        "DELETE FROM vnindex_drawdown "
+        "WHERE time >= %s "
     )
 
-    COPY_MA_DATA = (
+    COPY_DRAWDOWN_DATA = (
                                 """
-                                COPY moving_average
-                                (symbol, time, sma_20, sma_50, sma_200)
+                                COPY vnindex_drawdown
+                                (time, drawdown_40d)
                                 FROM STDIN WITH (FORMAT CSV)
                                 """
     )

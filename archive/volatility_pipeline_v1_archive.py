@@ -1,13 +1,12 @@
 import logging
 
 import numpy as np
-from pandas.core.interchange.dataframe_protocol import DataFrame
 
 from config.postgre_manager import PostgresManager
-from constant.constants.rsi_constant import RsiConstant
-from constant.constants.volatility_constant import VolatilityConstant
-from constant.sql.rsi_sql_queries import RsiSQLQueries
-from constant.sql.volatility_sql_queries import VolatilitySQLQueries
+from constant.constants.stock.stock_rsi_constant import RsiConstant
+from constant.constants.stock.stock_volatility_constant import VolatilityConstant
+from constant.sql.stock.stock_rsi_sql_queries import RsiSQLQueries
+from constant.sql.stock.stock_volatility_sql_queries import VolatilitySQLQueries
 from util.pandas_util import PandasUtil
 from util.postgre_sql import PostgresSQLUtil
 # Thread pool for running symbol jobs concurrently.
