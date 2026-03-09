@@ -31,6 +31,16 @@ class MovingAverageSQLQueries(str, Enum):
         "ORDER BY time ASC"
     )
 
+    # Return the latest 151 rows up to (and including) the provided date.
+    # Why 151:
+    # - The pipeline computes SMA(150), so it needs at least 150 prior sessions
+    #   plus the current session for a complete rolling window.
+    # Date boundary logic:
+    # - `time < (%s::date + INTERVAL '1 day')` includes all records on `%s::date`
+    #   when `time` is stored as a timestamp.
+    # Ordering strategy:
+    # - Inner query selects most recent records quickly via DESC + LIMIT 151.
+    # - Outer query reorders to ASC to support chronological calculations.
     GET_DATA_BY_DATE = (
         "SELECT * "
         "FROM ( "
@@ -43,11 +53,24 @@ class MovingAverageSQLQueries(str, Enum):
         "ORDER BY time ASC "
     )
 
+    # Delete moving-average records from the specified start point onward.
+    # Typical use case:
+    # - Recompute recent periods after backfill, bug fix, or formula adjustment.
+    # Safety note:
+    # - Keeps historical rows before `%s` untouched to avoid unnecessary rewrites.
     DELETE_MA_DATA = (
         "DELETE FROM vnindex_moving_average "
         "WHERE time >= %s "
     )
 
+    # Bulk-load computed moving-average values into the target table.
+    # Expected input:
+    # - CSV content streamed through STDIN by the caller.
+    # Column mapping:
+    # - `time`    -> trading session key
+    # - `sma_150` -> simple moving average over 150 sessions
+    # Performance:
+    # - COPY is preferred over row-by-row INSERT for batch ETL workloads.
     COPY_MA_DATA = (
                                 """
                                 COPY vnindex_moving_average

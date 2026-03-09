@@ -14,6 +14,18 @@ import pandas as pd
 from io import StringIO
 
 class VnIndexMovingAveragePipeline:
+    """
+    VNINDEX moving-average feature pipeline.
+
+    Class-scale responsibilities:
+    - Orchestrate moving-average calculation for VNINDEX data.
+    - Support `backfill` (full-history rebuild) and `incremental` (latest snapshot) modes.
+    - Persist derived features into `vnindex_moving_average` using delete-then-COPY.
+
+    Current output contract:
+    - `time`
+    - `sma_150` (computed from prior 150 closes, i.e., shifted by one session in backfill path)
+    """
 
     def __init__(
             self,
@@ -22,19 +34,19 @@ class VnIndexMovingAveragePipeline:
             current_time: str = "",
             mode: str = ""
     ):
-        # Class-scoped logger name, e.g., "MovingAveragePipeline".
+        # Logger name is bound to the concrete class for easy pipeline-level tracing.
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # Number of worker threads used in run_all_parallel.
+        # Reserved concurrency configuration (not used directly in this v1 run path).
         self.max_workers = max_workers
 
-        # SQL text used to fetch symbol universe.
+        # Reserved query text for broader orchestration patterns.
         self.symbol_queries = symbol_queries
 
-        # Pipeline "effective time" used by incremental mode and delete range.
+        # Effective processing time; used by incremental read and delete scope.
         self.current_time = current_time
 
-        # Expected: "backfill" or "incremental".
+        # Execution mode selector. Expected values: "backfill" or "incremental".
         self.mode = mode
 
     # =========================================================
@@ -42,6 +54,15 @@ class VnIndexMovingAveragePipeline:
     # =========================================================
 
     def run(self):
+        """
+        Main pipeline entry point.
+
+        Function-scale flow:
+        - Log start.
+        - Choose synthesis strategy by mode.
+        - Persist result set.
+        - Log finish or log failure.
+        """
 
         try:
             self.logger.info(
@@ -55,14 +76,14 @@ class VnIndexMovingAveragePipeline:
             elif self.mode == MaConstant.MODE_INCREMENTAL.value:
                 df = self._incremental_synthesize(self.current_time)
 
-            # Persist dataframe (delete existing range first, then bulk copy).
+            # Persist output with idempotent pattern: delete scoped rows, then COPY insert.
             self._store(df, self.current_time)
 
             self.logger.info(
                 MaConstant.LOG_FINISH.value
             )
         except Exception as e:
-            # Error is logged, not re-raised -> job continues for other symbols.
+            # Error is logged and swallowed to keep batch orchestration resilient.
             self.logger.error(
                 MaConstant.LOG_ERROR.value
             )
@@ -72,8 +93,17 @@ class VnIndexMovingAveragePipeline:
     # =========================================================
 
     def _backfill_synthesize(self) -> pd.DataFrame:
+        """
+        Build full-history SMA dataset for VNINDEX.
 
-        # Backfill: fetch broad historical set for symbol.
+        Function-scale steps:
+        - Read complete source history.
+        - Normalize numeric dtypes for vectorized math.
+        - Compute shifted SMA(150) so value at T uses data up to T-1.
+        - Return persistence columns in COPY-compatible order.
+        """
+
+        # Backfill path reads complete VNINDEX history.
         data = PostgresSQLUtil.run_sql(
             MovingAverageSQLQueries.GET_DATA,
         )
@@ -81,16 +111,16 @@ class VnIndexMovingAveragePipeline:
         # Convert row dict/list into DataFrame for vectorized computation.
         df = pd.DataFrame(data).copy()
 
-        # Convert object columns to float64 (commonly NUMERIC from DB).
-        # CAUTION: This attempts conversion for all object columns, which may fail
-        # if non-numeric string columns exist in result set.
+        # Convert DB object-like numeric columns into float64 for stable rolling math.
+        # CAUTION: If a non-numeric object column exists, astype conversion will fail.
         df = df.astype({
             col: MaConstant.FLOAT64_DTYPE.value
             for col in df.columns
             if df[col].dtype == MaConstant.OBJECT_DTYPE.value
         })
 
-        # Simple moving average features based on lagged closes (20/50/200/ trading days).
+        # SMA(150) computed from trailing close history and shifted 1 session:
+        # value at time T uses closes through T-1 (no same-day look-ahead).
         df[MaConstant.SMA_150_KEY.value] = (
             df[MaConstant.CLOSE_KEY.value]
             .rolling(MaConstant.SMA_150_WINDOW.value)
@@ -108,7 +138,17 @@ class VnIndexMovingAveragePipeline:
         ]
 
     def _incremental_synthesize(self,date: str) -> pd.DataFrame:
+        """
+        Build one-row SMA snapshot for an incremental date.
 
+        Function-scale steps:
+        - Fetch bounded recent history ending at `date` (inclusive by SQL boundary).
+        - Normalize dtypes for numeric operations.
+        - Compute latest SMA(150) from prior 150 closes.
+        - Return a single-row dataframe for upsert-style reload.
+        """
+
+        # Pull bounded history window required for latest SMA(150) computation.
         data = PostgresSQLUtil.run_sql(
             MovingAverageSQLQueries.GET_DATA_BY_DATE,
             (date,)
@@ -117,21 +157,22 @@ class VnIndexMovingAveragePipeline:
         # Convert row dict/list into DataFrame for vectorized computation.
         df = pd.DataFrame(data).copy()
 
-        # Convert object columns to float64 (commonly NUMERIC from DB).
-        # CAUTION: This attempts conversion for all object columns, which may fail
-        # if non-numeric string columns exist in result set.
+        # Convert DB object-like numeric columns into float64 for stable calculations.
         df = df.astype({
             col: MaConstant.FLOAT64_DTYPE.value
             for col in df.columns
             if df[col].dtype == MaConstant.OBJECT_DTYPE.value
         })
 
-        # Simple moving average features based on lagged closes which using data up to T-1 day (50/200/ trading days).
+        # Select the latest row as target timestamp for incremental output.
         last_row = df.iloc[-1]
 
+        # Use raw numpy array for efficient slicing and mean calculation.
         close_values = df[MaConstant.CLOSE_KEY.value].values
         n = len(close_values)
 
+        # Compute SMA(150) from prior 150 closes, excluding current bar (`-1`).
+        # If history is insufficient, emit NaN (caller/database policy handles it).
         sma_20 = close_values[-151:-1].mean() if n >= 151 else np.nan
 
         return pd.DataFrame([{
@@ -148,12 +189,17 @@ class VnIndexMovingAveragePipeline:
 
     def _store(self, df: pd.DataFrame, date: str):
         """
-        Persist one symbol dataframe:
+        Persist synthesized moving-average rows:
         - Skip if empty
-        - Delete existing target rows in scope
-        - Bulk insert via COPY for speed
+        - Delete existing target rows in date scope
+        - Bulk insert via COPY for throughput
+
+        Operation-scale notes:
+        - Delete + COPY run in one transaction.
+        - `synchronous_commit = off` is used as ETL performance optimization.
         """
 
+        # No data generated -> nothing to persist.
         if df.empty:
             return
 
@@ -165,20 +211,19 @@ class VnIndexMovingAveragePipeline:
                 # Do not using this option for important data which can't be recovered
                 cursor.execute(MaConstant.SET_SYNC_COMMIT_OFF.value)
 
-                # Remove existing rows before reloading.
-                # For backfill: date is oldest bound -> broad cleanup.
-                # For incremental: date is new boundary -> narrow cleanup.
+                # Idempotent reload pattern: remove rows from date boundary onward,
+                # then write fresh computed values for that same scope.
                 cursor.execute(
                     MovingAverageSQLQueries.DELETE_MA_DATA,
                     (date,)
                 )
 
-                # Prepare CSV in-memory buffer for COPY command.
+                # Prepare in-memory CSV buffer to avoid row-by-row INSERT overhead.
                 buffer = StringIO()
                 df.to_csv(buffer, index=False, header=False)
                 buffer.seek(0)
 
-                # High-throughput insert into momentum target table.
+                # High-throughput insert into moving-average target table.
                 cursor.copy_expert(
                     MovingAverageSQLQueries.COPY_MA_DATA,
                     buffer

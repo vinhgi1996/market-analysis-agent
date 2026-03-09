@@ -31,6 +31,17 @@ class MomentumSQLQueries(str, Enum):
         "FROM vnindex_history "
         "ORDER BY time "
     )
+
+    # Fetch data up to a target date and return only the latest computable point.
+    # Query flow:
+    # - `base` CTE pulls the most recent 61 rows up to (and including) `%s::date`.
+    # - 61 rows are needed so `LAG(close, 60)` can be resolved for the newest row.
+    # Date boundary logic:
+    # - `time < (%s::date + INTERVAL '1 day')` includes all rows on `%s::date`
+    #   when `time` is a timestamp.
+    # Result shape:
+    # - Final SELECT computes `close_60` over `base`, then returns only 1 row
+    #   (`ORDER BY time DESC LIMIT 1`) for point-in-time momentum calculation.
     GET_DATA_BY_DATE = (
         "WITH base AS ( "
             "SELECT * "
@@ -48,11 +59,24 @@ class MomentumSQLQueries(str, Enum):
         "LIMIT 1"
     )
 
+    # Delete momentum rows from a chosen start timestamp/date onward.
+    # Typical use case:
+    # - Recalculate recent momentum after data corrections or logic updates.
+    # Safety note:
+    # - Restricting by `time >= %s` prevents accidental full-table deletion.
     DELETE_MOMENTUM_DATA = (
         "DELETE FROM vnindex_momentum "
         "WHERE time >= %s "
     )
 
+    # Bulk-load momentum output into PostgreSQL via COPY FROM STDIN.
+    # Expected input:
+    # - CSV stream provided by the ETL caller.
+    # Column mapping:
+    # - `time` -> trading session key
+    # - `m_60d` -> 60-session momentum metric
+    # Performance:
+    # - COPY is faster and more scalable than many single-row INSERT statements.
     COPY_MOMENTUM_DATA = (
                                 """
                                 COPY vnindex_momentum

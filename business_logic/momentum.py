@@ -415,8 +415,8 @@ if __name__ == "__main__":
 
     start = time.perf_counter()
     pipeline = VnIndexRegimeFilterPipeline(max_workers=4,
-                                       mode="backfill",
-                                       current_time='2023-01-03')
+                                       mode="incremental",
+                                       current_time='2026-03-06')
     pipeline.run()
     end = time.perf_counter()
     print(f"Total execution time: {end - start:.6f}")

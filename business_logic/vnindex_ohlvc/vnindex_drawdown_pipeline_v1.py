@@ -108,7 +108,7 @@ class VnIndexDrawdownPipeline:
             (date,)
         )
 
-        if len(data) < 20 :
+        if len(data) < 40 :
             raise ValueError("Insufficient data for incremental computation")
 
         # Convert row dict/list into DataFrame for vectorized computation.

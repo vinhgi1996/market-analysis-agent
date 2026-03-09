@@ -20,6 +20,21 @@ pd.set_option('display.max_colwidth', None)
 from io import StringIO
 
 class VolatilityPipelineV2:
+    """
+    Stock volatility feature pipeline (v2).
+
+    Class-scale responsibilities:
+    - Compute multi-horizon volatility and range-based risk metrics per symbol.
+    - Support both full-history rebuild (`backfill`) and point-in-time update
+      (`incremental`) execution modes.
+    - Persist results into `stock_volatility` via scoped delete + COPY bulk load.
+
+    Output features:
+    - `vol_20d`, `vol_60d`, `vol_126d`, `vol_252d` (annualized log-return volatility)
+    - `atr_14_r` (simple rolling ATR), `atr_14_w` (Wilder ATR)
+    - `parkinson_20d` (range-based volatility estimator)
+    - `vol_20d_pct_126`, `vol_20d_pct_252` (rolling percentile rank context)
+    """
 
     def __init__(
             self,
@@ -28,19 +43,19 @@ class VolatilityPipelineV2:
             current_time: str = "",
             mode: str = ""
     ):
-        # Class-scoped logger name, e.g., "MovingAveragePipeline".
+        # Logger is bound to class name for pipeline-specific traceability.
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # Number of worker threads used in run_all_parallel.
+        # Worker count used by run_all_parallel thread pool.
         self.max_workers = max_workers
 
-        # SQL text used to fetch symbol universe.
+        # SQL that returns the symbol universe for parallel execution.
         self.symbol_queries = symbol_queries
 
-        # Pipeline "effective time" used by incremental mode and delete range.
+        # Effective processing date/timestamp used by incremental mode and delete scope.
         self.current_time = current_time
 
-        # Expected: "backfill" or "incremental".
+        # Expected mode values: "backfill" or "incremental".
         self.mode = mode
 
     # =========================================================
@@ -48,6 +63,14 @@ class VolatilityPipelineV2:
     # =========================================================
 
     def run(self, symbol: str):
+        """
+        Execute pipeline for one symbol end-to-end.
+
+        Function-scale flow:
+        - Select synthesis path from configured mode.
+        - Compute volatility features.
+        - Persist with delete-then-COPY idempotent pattern.
+        """
 
         try:
             self.logger.info(
@@ -60,7 +83,7 @@ class VolatilityPipelineV2:
                 df = self._backfill_synthesize(symbol)
             elif self.mode == VolatilityConstant.MODE_INCREMENTAL.value:
                 df = self._incremental_synthesize(symbol,self.current_time)
-            # Persist dataframe (delete existing range first, then bulk copy).
+            # Persist computed dataframe after scoped cleanup.
             self._store(df, self.current_time)
 
             self.logger.info(
@@ -74,13 +97,17 @@ class VolatilityPipelineV2:
 
     def run_all_parallel(self):
         """
-        Run pipeline for every symbol returned by `self.symbol_queries`
-        using ThreadPoolExecutor.
+        Run this pipeline across all symbols using a thread pool.
+
+        Function-scale flow:
+        - Load symbols from `self.symbol_queries`.
+        - Dispatch one `run(symbol)` task per symbol.
+        - Re-raise worker exceptions via `future.result()` to avoid silent failures.
         """
         # NOTE: This string appears to have encoding artifacts in current source.
         self.logger.info(RsiConstant.LOG_PARALLEL_START.value)
 
-        # Expect list[dict], each dict has at least key: "symbol".
+        # Expected shape: list[dict], each dict contains at least the symbol key.
         symbols = PostgresSQLUtil.run_sql(self.symbol_queries)
         symbol_list = [s[RsiConstant.SYMBOL_KEY.value] for s in symbols]
 
@@ -100,9 +127,16 @@ class VolatilityPipelineV2:
     # =========================================================
 
     def _calculate_log_return(self, df: pd.DataFrame) -> pd.Series:
+        """Compute one-period log return: ln(close_t / close_{t-1})."""
         return np.log(df["close"] / df["close"].shift(1))
 
     def _calculate_rolling_volatility(self, log_return: pd.Series) -> dict[str, pd.Series]:
+        """
+        Compute annualized rolling volatility for configured horizons.
+
+        Formula per window `w`:
+        - vol_w = std(log_return over w sessions) * sqrt(252)
+        """
         volatility_map = {}
         for w in [20, 60, 126, 252]:
             volatility_map[f"vol_{w}d"] = (
@@ -113,6 +147,15 @@ class VolatilityPipelineV2:
         return volatility_map
 
     def _calculate_true_range(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Compute True Range (TR) per row.
+
+        TR_t = max(
+          high_t - low_t,
+          |high_t - close_{t-1}|,
+          |low_t  - close_{t-1}|
+        )
+        """
         prev_close = df["close"].shift(1)
         return pd.concat([
             df["high"] - df["low"],
@@ -121,13 +164,21 @@ class VolatilityPipelineV2:
         ], axis=1).max(axis=1)
 
     def _calculate_atr_14_r(self, tr: pd.Series) -> pd.Series:
+        """Compute simple rolling ATR(14) as mean(TR) over 14 sessions."""
         return tr.rolling(14).mean()
 
     def _calculate_parkinson_20d(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Compute Parkinson volatility estimator over 20 sessions, annualized.
+
+        Uses high/low range information:
+        sigma = sqrt( sum(log(H/L)^2) / (4 * n * ln(2)) ) * sqrt(252), n=20
+        """
         pk = np.log(df["high"] / df["low"]) ** 2
         return ((pk.rolling(20).sum()) /(4 * 20 * np.log(2))) ** 0.5 * np.sqrt(252)
 
     def _calculate_vol_20d_pct_252(self, df: pd.DataFrame) -> pd.Series:
+        """Percentile rank of latest `vol_20d` inside each 252-session rolling window."""
         return (
             df["vol_20d"]
             .rolling(252)
@@ -135,6 +186,7 @@ class VolatilityPipelineV2:
         )
 
     def _calculate_vol_20d_pct_126(self, df: pd.DataFrame) -> pd.Series:
+        """Percentile rank of latest `vol_20d` inside each 126-session rolling window."""
         return (
             df["vol_20d"]
             .rolling(126)
@@ -147,6 +199,14 @@ class VolatilityPipelineV2:
             volatility_df: pd.DataFrame,
             n: int = 14
     ) -> pd.DataFrame:
+        """
+        Incrementally update Wilder ATR(14) for the newest bar only.
+
+        Function-scale requirements:
+        - `ohlvc_df` must include at least previous + latest rows.
+        - `volatility_df` must provide prior stored `atr_14_w`.
+        - Returns one-row dataframe with latest feature snapshot.
+        """
         # Need latest bar + previous close to compute TR for the latest bar.
         if len(ohlvc_df) < 2:
             raise ValueError("ohlvc_df must contain at least 2 rows for incremental ATR.")
@@ -166,6 +226,8 @@ class VolatilityPipelineV2:
             abs(high_last - prev_close),
             abs(low_last - prev_close),
         )
+        # Wilder recursive update:
+        # ATR_t = (ATR_{t-1} * (n - 1) + TR_t) / n
         atr_14_w = (prev_atr * (n - 1) + tr_last) / n
 
         return pd.DataFrame([{
@@ -183,6 +245,14 @@ class VolatilityPipelineV2:
         }])
 
     def _calculate_wilder_atr_backfill(self,df, n=14):
+        """
+        Compute full-series Wilder ATR for backfill mode.
+
+        Operation-scale flow:
+        - Vectorize TR computation.
+        - Seed ATR at index n-1 with mean(TR[:n]).
+        - Apply Wilder recursion for the remaining rows.
+        """
         high = df["high"].to_numpy()
         low = df["low"].to_numpy()
         close = df["close"].to_numpy()
@@ -212,8 +282,17 @@ class VolatilityPipelineV2:
         return atr
 
     def _backfill_synthesize(self, symbol: str) -> pd.DataFrame:
+        """
+        Build full-history volatility features for one symbol.
 
-        # Backfill: fetch broad historical set for symbol.
+        Function-scale steps:
+        - Load all OHLCV rows for symbol.
+        - Normalize dtypes for numeric operations.
+        - Compute return-based, ATR-based, Parkinson, and percentile features.
+        - Return persistence columns in COPY order.
+        """
+
+        # Backfill path loads full symbol history.
         data = PostgresSQLUtil.run_sql(
             VolatilitySQLQueries.GET_DATA_BY_SYMBOL_OHLVC,
             (symbol,)
@@ -222,32 +301,30 @@ class VolatilityPipelineV2:
         # Convert row dict/list into DataFrame for vectorized computation.
         df = pd.DataFrame(data).copy()
 
-        # Convert object columns to float64 (commonly NUMERIC from DB).
-        # CAUTION: This attempts conversion for all object columns, which may fail
-        # if non-numeric string columns exist in result set.
+        # Convert numeric-like object columns (from DB NUMERIC) to float64.
         df = PandasUtil.cast_object_columns_to_float64(df)
 
-        # Log returns
+        # Step 1: return series for volatility estimation.
         df["log_return"] = self._calculate_log_return(df)
 
-        # Rolling volatility
+        # Step 2: annualized rolling volatility across multiple windows.
         vol_map = self._calculate_rolling_volatility(df["log_return"])
         for col_name, series in vol_map.items():
             df[col_name] = series
 
-        # ATR
+        # Step 3: ATR variants from True Range.
         tr = self._calculate_true_range(df)
 
         df["atr_14_r"] = self._calculate_atr_14_r(tr)
         df["atr_14_w"] = self._calculate_wilder_atr_backfill(df, 14)
 
-        # Parkinson 20d
+        # Step 4: Parkinson range-based volatility.
         df["parkinson_20d"] = self._calculate_parkinson_20d(df)
 
-        # Volatility percentile 20d (annualized - 126 days)
+        # Step 5: context percentile of current 20d vol in 126-session history.
         df["vol_20d_pct_126"] = self._calculate_vol_20d_pct_126(df)
 
-        # Volatility percentile 20d (annualized - 252 days)
+        # Step 6: context percentile of current 20d vol in 252-session history.
         df["vol_20d_pct_252"] = self._calculate_vol_20d_pct_252(df)
 
         # Keep only persistence contract columns (order matters for COPY).
@@ -268,14 +345,26 @@ class VolatilityPipelineV2:
         ]
 
     def _incremental_synthesize(self, symbol: str, date: str) -> pd.DataFrame:
+        """
+        Build one-row latest volatility snapshot for incremental mode.
+
+        Function-scale steps:
+        - Load bounded OHLCV window and prior ATR state.
+        - Recompute latest volatility features on the bounded window.
+        - Update Wilder ATR using recursion from previous stored ATR.
+        - Return one-row dataframe for persistence.
+        """
+        # Bounded OHLCV history that supports max lookback windows.
         ohlvc_data = PostgresSQLUtil.run_sql(
             VolatilitySQLQueries.GET_DATA_BY_DATE_SYMBOL_OHLVC,
             (symbol, date)
         )
+        # Previous Wilder ATR state used for recursive incremental update.
         volatility_data = PostgresSQLUtil.run_sql(
             VolatilitySQLQueries.GET_DATA_BY_DATE_SYMBOL_ATR_14_W,
             (symbol, date)
         )
+        # 253 rows support up to 252-session lookback + latest row.
         if len(ohlvc_data) < 253 or not volatility_data:
             raise ValueError("Insufficient data for incremental computation")
 
@@ -283,35 +372,34 @@ class VolatilityPipelineV2:
         ohlvc_df = pd.DataFrame(ohlvc_data).copy()
         volatility_df = pd.DataFrame(volatility_data).copy()
 
-        # Convert object columns to float64 (commonly NUMERIC from DB).
-        # CAUTION: This attempts conversion for all object columns, which may fail
-        # if non-numeric string columns exist in result set.
+        # Normalize numeric-like object dtypes for stable math.
         ohlvc_df = PandasUtil.cast_object_columns_to_float64(ohlvc_df)
         volatility_df = PandasUtil.cast_object_columns_to_float64(volatility_df)
 
-        # Log returns
+        # Step 1: return series for rolling volatility.
         ohlvc_df["log_return"] = self._calculate_log_return(ohlvc_df)
 
-        # Rolling volatility
+        # Step 2: recompute rolling vol features in bounded context.
         vol_map = self._calculate_rolling_volatility(ohlvc_df["log_return"])
         for col_name, series in vol_map.items():
             ohlvc_df[col_name] = series
 
-        # Volatility percentile 20d (annualized 252 days)
+        # Step 3: percentile context features for vol_20d.
         ohlvc_df["vol_20d_pct_252"] = self._calculate_vol_20d_pct_252(ohlvc_df)
 
-        # Volatility percentile 20d (annualized 252 days)
+        # 126-session percentile companion.
         ohlvc_df["vol_20d_pct_126"] = self._calculate_vol_20d_pct_126(ohlvc_df)
 
+        # Parkinson and rolling ATR are computed on a 20-row tail context.
         parkinson_ohlvc_df = ohlvc_df.tail(20).copy().reset_index(drop=True)
 
-        # Parkinson 20d
+        # Step 4: range-based Parkinson volatility.
         parkinson_ohlvc_df["parkinson_20d"] = self._calculate_parkinson_20d(parkinson_ohlvc_df)
 
-        # ATR 14 days standard rolling
+        # Step 5: simple rolling ATR(14) from TR.
         tr = self._calculate_true_range(parkinson_ohlvc_df)
         parkinson_ohlvc_df["atr_14_r"] = self._calculate_atr_14_r(tr)
-        # ATR 14 days wilder smoothing
+        # Step 6: Wilder ATR(14) recursive update from previous persisted ATR.
         atr_14_w = parkinson_ohlvc_df.tail(2).copy().reset_index(drop=True)
         final_df = self._calculate_wilder_atr_incremental(atr_14_w,volatility_df, 14)
 
@@ -323,12 +411,17 @@ class VolatilityPipelineV2:
 
     def _store(self, df: pd.DataFrame, date: str):
         """
-        Persist one symbol dataframe:
+        Persist synthesized volatility rows:
         - Skip if empty
         - Delete existing target rows in scope
         - Bulk insert via COPY for speed
+
+        Operation-scale notes:
+        - Runs delete + copy in one transaction.
+        - Uses `synchronous_commit = off` for ETL throughput on recoverable workloads.
         """
 
+        # No generated rows => no persistence action required.
         if df.empty:
             return
 
@@ -342,20 +435,18 @@ class VolatilityPipelineV2:
                 # Do not using this option for important data which can't be recovered
                 cursor.execute(VolatilityConstant.SET_SYNC_COMMIT_OFF.value)
 
-                # Remove existing rows before reloading.
-                # For backfill: date is oldest bound -> broad cleanup.
-                # For incremental: date is new boundary -> narrow cleanup.
+                # Idempotent reload: clear symbol rows from date boundary onward.
                 cursor.execute(
                     VolatilitySQLQueries.DELETE_VOLATILITY_DATA,
                     (symbol, date)
                 )
 
-                # Prepare CSV in-memory buffer for COPY command.
+                # Stream dataframe as in-memory CSV for high-throughput COPY.
                 buffer = StringIO()
                 df.to_csv(buffer, index=False, header=False)
                 buffer.seek(0)
 
-                # High-throughput insert into momentum target table.
+                # High-throughput insert into stock volatility target table.
                 cursor.copy_expert(
                     VolatilitySQLQueries.COPY_VOLATILITY_DATA,
                     buffer

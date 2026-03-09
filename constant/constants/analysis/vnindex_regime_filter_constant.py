@@ -24,5 +24,22 @@ class VnIndexRegimeFilterConstant(Enum):
     DRAWDOWN_40D_THRESHOLD = 'drawdown_40d_threshold'
     VOL_20D_THRESHOLD = 'vol_20d_threshold'
     SUGGESTION= 'suggestion'
+    POSITIVE_STREAK = 'positive_streak'
+
+    SOURCE_SMA_150D = "sma_150d"
+    SOURCE_M_60D = "m_60d"
+    SOURCE_DRAWDOWN_40D = "drawdown_40d"
+    SOURCE_VOL_20D = "vol_20d"
+
+    M_60D_THRESHOLD_VALUE = 0.03
+    DRAWDOWN_40D_THRESHOLD_VALUE = -0.08
+    VOL_20D_THRESHOLD_VALUE = 0.25
+    ZERO = 0
+    ONE = 1
+
+    SUGGESTION_SAFE = "SAFE"
+    SUGGESTION_DEFENSIVE = "DEFENSIVE"
+
+    ERROR_INSUFFICIENT_INCREMENTAL_DATA = "Insufficient data for incremental computation"
 
     SET_SYNC_COMMIT_OFF = "SET LOCAL synchronous_commit = OFF;"

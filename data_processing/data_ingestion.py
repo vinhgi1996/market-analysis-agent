@@ -144,7 +144,7 @@ def ohlvc():
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i:i + batch_size]
         for row in batch:
-            ohlvc_insert(row["symbol"],'KBS','2026-02-26','2026-02-26',"1D")
+            ohlvc_insert(row["symbol"],'KBS','2026-02-26','2026-03-06',"1D")
 
         if i + batch_size < len(symbols):
             print(f"Processed {i + batch_size} rows. Sleeping {delay} seconds...")
@@ -447,8 +447,8 @@ def run_ingest():
     print("Ingestion started.")
     #symbol_by_industry()
     #symbol_by_exchange()
-    #ohlvc()
-    vnindex()
+    ohlvc()
+    #vnindex()
 
 
 if __name__ == "__main__":

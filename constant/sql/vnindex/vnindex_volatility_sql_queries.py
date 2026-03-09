@@ -28,6 +28,16 @@ class VolatilitySQLQueries(str, Enum):
         "ORDER BY time ASC "
     )
 
+    # Return the latest 21 records up to (and including) the provided date.
+    # Why 21:
+    # - This pipeline computes 20-day volatility and typically needs a lookback window
+    #   that includes prior sessions around the target date.
+    # Date boundary logic:
+    # - `time < (%s::date + INTERVAL '1 day')` makes the filter inclusive for `%s::date`
+    #   when `time` is a timestamp (all rows before next day 00:00:00 are included).
+    # Ordering strategy:
+    # - Inner query sorts DESC + LIMIT 21 to efficiently pick most recent rows.
+    # - Outer query re-sorts ASC so downstream calculations run in chronological order.
     GET_DATA_BY_DATE= (
         "SELECT * "
         "FROM ( "
@@ -38,11 +48,25 @@ class VolatilitySQLQueries(str, Enum):
         ") sub "
         "ORDER BY time ASC "
     )
+
+    # Delete volatility rows from a starting timestamp/date onward.
+    # Typical use case:
+    # - Rebuild/recompute recent data after logic changes or backfilling corrections.
+    # Safety note:
+    # - Scope is intentionally bounded by `time >= %s` to avoid full-table deletion.
     DELETE_VOLATILITY_DATA = (
         "DELETE FROM vnindex_volatility "
         "WHERE time >= %s "
     )
 
+    # Bulk-load computed volatility into the destination table using PostgreSQL COPY.
+    # Expected input:
+    # - CSV stream provided through STDIN by the caller.
+    # Column mapping:
+    # - `time`    -> trading session date/time key
+    # - `vol_20d` -> calculated rolling 20-day volatility
+    # Performance:
+    # - COPY is significantly faster than row-by-row INSERT for large batches.
     COPY_VOLATILITY_DATA = (
                                 """
                                 COPY vnindex_volatility

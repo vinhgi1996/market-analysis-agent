@@ -36,6 +36,18 @@ class MomentumSQLQueries(str, Enum):
         "WHERE symbol = %s "
         "WINDOW w AS (PARTITION BY symbol ORDER BY time)"
     )
+
+    # Fetch data up to a target date and return only the latest row with all momentum lags.
+    # Why LIMIT 253 in `base`:
+    # - The furthest lag is 252 sessions (`close_252`), so one additional current row
+    #   is required to compute all lag fields for the newest observation.
+    # Date boundary logic:
+    # - `time < (%s::date + INTERVAL '1 day')` includes all records on `%s::date`
+    #   when `time` is a timestamp.
+    # Query flow:
+    # - CTE `base` captures recent history for one symbol.
+    # - Window `w` computes 21/63/126/252-session lag closes.
+    # - Final `ORDER BY time DESC LIMIT 1` returns a point-in-time snapshot.
     GET_DATA_BY_DATE_SYMBOL = (
         "WITH base AS ( "
             "SELECT * "
@@ -59,12 +71,25 @@ class MomentumSQLQueries(str, Enum):
         "LIMIT 1"
     )
 
+    # Delete momentum rows for one symbol from the given start date/time onward.
+    # Typical use case:
+    # - Recompute recent momentum values after OHLCV corrections or formula updates.
+    # Safety note:
+    # - Combined symbol + time filter prevents cross-symbol data loss.
     DELETE_MOMENTUM_DATA = (
         "DELETE FROM stock_momentum "
         "WHERE symbol = %s "
         "AND time >= %s "
     )
 
+    # Bulk-load calculated momentum metrics via PostgreSQL COPY.
+    # Expected input:
+    # - CSV stream with fields matching the listed order.
+    # Column mapping:
+    # - `m_1`, `m_3`, `m_6`, `m_12` represent 1/3/6/12-month style momentum horizons
+    #   (implemented by the pipeline's trading-session lag conventions).
+    # Performance:
+    # - COPY is significantly faster than issuing many individual INSERT statements.
     COPY_MOMENTUM_DATA = (
                                 """
                                 COPY stock_momentum

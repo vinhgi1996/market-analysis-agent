@@ -8,8 +8,7 @@ from constant.constants.vnindex.vnindex_volatility_constant import VolatilityCon
 from constant.sql.vnindex.vnindex_volatility_sql_queries import VolatilitySQLQueries
 from util.pandas_util import PandasUtil
 from util.postgre_sql import PostgresSQLUtil
-# Thread pool for running symbol jobs concurrently.
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 
 import pandas as pd
@@ -20,6 +19,21 @@ pd.set_option('display.max_colwidth', None)
 from io import StringIO
 
 class VnIndexVolatilityPipeline:
+    """
+    VNINDEX volatility feature pipeline.
+
+    Responsibility at class scale:
+    - Orchestrate end-to-end volatility generation for VNINDEX history.
+    - Support two execution modes:
+      1) backfill: recompute across full available history.
+      2) incremental: recompute only the latest effective date snapshot.
+    - Persist output into `vnindex_volatility` using delete-then-copy semantics.
+
+    Output contract:
+    - Required columns: `time`, `vol_20d`
+    - Volatility definition: annualized standard deviation of log returns
+      over a 20-session rolling window (multiplied by sqrt(252)).
+    """
 
     def __init__(
             self,
@@ -48,6 +62,14 @@ class VnIndexVolatilityPipeline:
     # =========================================================
 
     def run(self):
+        """
+        Entry point for pipeline execution.
+
+        Function-scale behavior:
+        - Decide synthesis path based on mode (`backfill` or `incremental`).
+        - Persist resulting dataframe via `_store`.
+        - Log lifecycle start/finish/error.
+        """
 
         try:
             self.logger.info(
@@ -77,9 +99,22 @@ class VnIndexVolatilityPipeline:
     # =========================================================
 
     def _calculate_log_return(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Compute one-period log return from close prices.
+
+        Formula:
+        - log_return_t = ln(close_t / close_{t-1})
+        """
         return np.log(df["close"] / df["close"].shift(1))
 
     def _calculate_rolling_volatility(self, log_return: pd.Series) -> dict[str, pd.Series]:
+        """
+        Build volatility feature series from log returns.
+
+        Current implementation:
+        - Only `vol_20d` is produced.
+        - Uses rolling standard deviation and annualizes by sqrt(252).
+        """
         volatility_map = {}
         for w in [20]:
             volatility_map[f"vol_{w}d"] = (
@@ -91,6 +126,15 @@ class VnIndexVolatilityPipeline:
 
 
     def _backfill_synthesize(self) -> pd.DataFrame:
+        """
+        Generate full-history volatility dataset.
+
+        Function-scale steps:
+        - Load historical OHLC data from source table.
+        - Cast numeric-like object columns to float for stable math operations.
+        - Compute log returns and rolling volatility features.
+        - Return only target persistence columns in COPY order.
+        """
 
         # Backfill: fetch broad historical set for symbol.
         data = PostgresSQLUtil.run_sql(
@@ -122,11 +166,22 @@ class VnIndexVolatilityPipeline:
         ]
 
     def _incremental_synthesize(self, date: str) -> pd.DataFrame:
+        """
+        Generate a single-date volatility snapshot for incremental processing.
+
+        Function-scale steps:
+        - Fetch bounded history ending at `date` (inclusive by query design).
+        - Validate minimum rows required for 20-session window math.
+        - Compute features on the bounded set.
+        - Return only the latest row in target output shape.
+        """
+        # Pull the minimum bounded history needed to compute the latest 20-day vol.
         data = PostgresSQLUtil.run_sql(
             VolatilitySQLQueries.GET_DATA_BY_DATE,
             (date,)
         )
 
+        # 20-day rolling std requires enough observations for a valid last window.
         if len(data) < 20 :
             raise ValueError("Insufficient data for incremental computation")
 
@@ -147,6 +202,7 @@ class VnIndexVolatilityPipeline:
         for col_name, series in vol_map.items():
             data_df[col_name] = series
 
+        # Keep only the newest computed observation for incremental write.
         last_row = data_df.iloc[-1]
 
         # Keep only persistence contract columns (order matters for COPY).
@@ -165,8 +221,14 @@ class VnIndexVolatilityPipeline:
         - Skip if empty
         - Delete existing target rows in scope
         - Bulk insert via COPY for speed
+
+        Operation-scale notes:
+        - Executes delete + copy in one DB transaction.
+        - Uses `synchronous_commit = off` for faster ETL throughput in recoverable flows.
+        - Delete scope is controlled by `date` and query predicate (`time >= %s`).
         """
 
+        # No-op for empty synthesis output (avoids unnecessary DB roundtrip).
         if df.empty:
             return
 
@@ -188,6 +250,7 @@ class VnIndexVolatilityPipeline:
                 )
 
                 # Prepare CSV in-memory buffer for COPY command.
+                # This avoids row-by-row INSERT overhead.
                 buffer = StringIO()
                 df.to_csv(buffer, index=False, header=False)
                 buffer.seek(0)
