@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from io import StringIO
 
-class RsiPipeline:
+class StockRsiPipeline:
     """
     Stock RSI feature pipeline.
 

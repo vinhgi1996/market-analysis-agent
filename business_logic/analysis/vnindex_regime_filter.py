@@ -18,7 +18,7 @@ from io import StringIO
 
 class VnIndexRegimeFilterPipeline:
     """
-    VNINDEX regime-filter pipeline.
+    LAYER 1: VNINDEX regime-filter pipeline.
 
     Class-scale responsibilities:
     - Combine upstream VNINDEX features (price, momentum, moving average, drawdown,

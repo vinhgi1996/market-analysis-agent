@@ -19,7 +19,7 @@ pd.set_option('display.width', None)
 pd.set_option('display.max_colwidth', None)
 from io import StringIO
 
-class VolatilityPipelineV2:
+class StockVolatilityPipelineV2:
     """
     Stock volatility feature pipeline (v2).
 
