@@ -1,34 +1,27 @@
 from enum import Enum
 
 
-class MomentumConstant(Enum):
+class StockRankingFilterConstant(Enum):
     MAX_WORKERS = 5
-
     MODE_BACKFILL = "backfill"
     MODE_INCREMENTAL = "incremental"
 
     LOG_START = "Start processing {symbol}"
     LOG_FINISH = "Finished processing {symbol}"
     LOG_ERROR = "Error processing {symbol}: {error}"
-    LOG_PARALLEL_START = " Parallel momentum pipeline started"
-    LOG_PARALLEL_FINISH = "Parallel momentum pipeline completed"
+    LOG_PARALLEL_START = " Parallel moving average pipeline started"
+    LOG_PARALLEL_FINISH = "Parallel moving average pipeline completed"
 
     SYMBOL_KEY = "symbol"
     TIME_KEY = "time"
     CLOSE_KEY = "close"
-
-    CLOSE_21_KEY = "close_21"
-    CLOSE_60_KEY = "close_60"
-    CLOSE_126_KEY = "close_126"
-
-    M_21D_KEY = "m_21d"
-    M_60D_KEY = "m_60d"
-    M_126D_KEY = "m_126d"
-
+    HIGH_KEY = "high"
+    LOW_KEY = "low"
     OBJECT_DTYPE = "object"
     FLOAT64_DTYPE = "float64"
 
-    ONE = 1
-    COMPOSITE_DIVISOR = 3
+    ALPHA_SCORE_KEY = "alpha_score"
+
+    ERROR_INSUFFICIENT_INCREMENTAL_DATA = "Insufficient data for incremental computation"
 
     SET_SYNC_COMMIT_OFF = "SET LOCAL synchronous_commit = OFF;"

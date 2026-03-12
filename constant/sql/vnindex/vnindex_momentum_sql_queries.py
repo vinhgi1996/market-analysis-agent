@@ -27,7 +27,9 @@ class MomentumSQLQueries(str, Enum):
         "SELECT "
         "time, "
         "close, "
-        "LAG(close, 60) OVER (ORDER BY time) AS close_60 "
+        "LAG(close, 21) OVER (ORDER BY time) AS close_21, "
+        "LAG(close, 60) OVER (ORDER BY time) AS close_60, "
+        "LAG(close, 126) OVER (ORDER BY time) AS close_126 "
         "FROM vnindex_history "
         "ORDER BY time "
     )
@@ -48,12 +50,14 @@ class MomentumSQLQueries(str, Enum):
             "FROM vnindex_history "
             "WHERE time < (%s::date + INTERVAL '1 day') "
             "ORDER BY time DESC "
-            "LIMIT 61 "
+            "LIMIT 127 "
         ") "
         "SELECT "
             "time, "
             "close, "
-            "LAG(close, 60) OVER (ORDER BY time) AS close_60 "
+            "LAG(close, 21) OVER (ORDER BY time) AS close_21, "
+            "LAG(close, 60) OVER (ORDER BY time) AS close_60, "
+            "LAG(close, 126) OVER (ORDER BY time) AS close_126 "
         "FROM base "
         "ORDER BY time DESC "
         "LIMIT 1"
@@ -80,7 +84,7 @@ class MomentumSQLQueries(str, Enum):
     COPY_MOMENTUM_DATA = (
                                 """
                                 COPY vnindex_momentum
-                                (time, m_60d)
+                                (time, m_21d, m_60d, m_126d)
                                 FROM STDIN WITH (FORMAT CSV)
                                 """
     )

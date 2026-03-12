@@ -118,16 +118,28 @@ class VnIndexMomentumPipeline:
             if df[col].dtype == MomentumConstant.OBJECT_DTYPE.value
         })
 
+        # 21-session momentum: relative change from close_{t-21} to close_t.
+        df[MomentumConstant.M_21D_KEY.value] = (
+                df[MomentumConstant.CLOSE_KEY.value] / df[MomentumConstant.CLOSE_21_KEY.value] - MomentumConstant.ONE.value
+        )
+
         # 60-session momentum: relative change from close_{t-60} to close_t.
         df[MomentumConstant.M_60D_KEY.value] = (
                 df[MomentumConstant.CLOSE_KEY.value] / df[MomentumConstant.CLOSE_60_KEY.value] - MomentumConstant.ONE.value
+        )
+
+        # 126-session momentum: relative change from close_{t-126} to close_t.
+        df[MomentumConstant.M_126D_KEY.value] = (
+                df[MomentumConstant.CLOSE_KEY.value] / df[MomentumConstant.CLOSE_126_KEY.value] - MomentumConstant.ONE.value
         )
 
         # Keep only persistence contract columns (order matters for COPY).
         return df[
             [
                 MomentumConstant.TIME_KEY.value,
+                MomentumConstant.M_21D_KEY.value,
                 MomentumConstant.M_60D_KEY.value,
+                MomentumConstant.M_126D_KEY.value,
             ]
         ]
 

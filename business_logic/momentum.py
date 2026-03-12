@@ -1,9 +1,10 @@
 import time
 
 import numpy as np
-
-from business_logic.analysis.stock_structural_strength_pipeline_v1 import StockStructuralStrengthPipeline
-from business_logic.analysis.vnindex_regime_filter import VnIndexRegimeFilterPipeline
+from datetime import datetime, timedelta
+from business_logic.analysis.stock_ranking_filter_v1 import StockRankingPipeline
+from business_logic.analysis.stock_structural_strength_filter_v1 import StockStructuralStrengthPipeline
+from business_logic.analysis.vnindex_regime_filter_v1 import VnIndexRegimeFilterPipeline
 from business_logic.stock_ohlvc.stock_momentum_pipeline_v1 import StockMomentumPipeline
 from business_logic.stock_ohlvc.stock_moving_average_pipeline_v1 import StockMovingAveragePipeline
 from business_logic.stock_ohlvc.stock_rsi_pipeline_v1 import StockRsiPipeline
@@ -339,44 +340,59 @@ def volatility_incremental_synthesize(self, symbol: str, date: str) -> pd.DataFr
     }])
     return result_df
 
+# def generate_dates(start_date_str):
+#     start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+#     today = datetime.today().date()
+#
+#     dates = []
+#     current = start_date
+#
+#     while current <= today:
+#         dates.append(current.strftime("%Y-%m-%d"))
+#         current += timedelta(days=1)
+#
+#     return dates
+
+def generate_dates(start_date_str, end_date_str):
+    start = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+    end  = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    delta = (end - start).days
+
+    return [
+        (start + timedelta(days=i)).strftime("%Y-%m-%d")
+        for i in range(delta + 1)
+    ]
+
 
 if __name__ == "__main__":
     #momentum_ohlcv()
 
 
     # pipeline = StockMomentumPipeline(max_workers=5,
-    #                             symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                             symbol_queries=SQLQueries.GET_HOSE_TOP_83_COMPANY_LIQUIDITY_SYMBOL,
     #                             mode="backfill",
     #                             current_time='2023-01-03')
     # pipeline.run_all_parallel()
 
     # pipeline = StockMovingAveragePipeline(max_workers=5,
-    #                             symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                             symbol_queries=SQLQueries.GET_HOSE_TOP_83_COMPANY_LIQUIDITY_SYMBOL,
     #                             mode="backfill",
     #                             current_time='2023-01-03')
     # pipeline.run_all_parallel()
 
     # start = time.perf_counter()
     # pipeline = StockRsiPipeline(max_workers=4,
-    #                        symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                        symbol_queries=SQLQueries.GET_HOSE_TOP_83_COMPANY_LIQUIDITY_SYMBOL,
     #                        mode="backfill",
-    #                        current_time='2026-01-03')
+    #                        current_time='2023-01-03')
     # pipeline.run_all_parallel()
     # end = time.perf_counter()
     # print(f":Total execution time: {end - start:.6f}")
 
-    # start = time.perf_counter()
-    # pipeline = VolatilityPipeline(max_workers=4,
-    #                        symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
-    #                        mode="backfill",
-    #                        current_time='2023-01-02')
-    # pipeline.run_all_parallel()
-    # end = time.perf_counter()
-    # print(f"Total execution time: {end - start:.6f}")
 
     # start = time.perf_counter()
     # pipeline = StockVolatilityPipelineV2(max_workers=4,
-    #                               symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                               symbol_queries=SQLQueries.GET_HOSE_TOP_83_COMPANY_LIQUIDITY_SYMBOL,
     #                               mode="backfill",
     #                               current_time='2023-01-03')
     # pipeline.run_all_parallel()
@@ -411,16 +427,16 @@ if __name__ == "__main__":
 
     # start = time.perf_counter()
     # pipeline = VnIndexDrawdownPipeline(max_workers=4,
-    #                                         mode="incremental",
-    #                                         current_time='2026-03-06')
+    #                                         mode="backfill",
+    #                                         current_time='2023-01-03')
     # pipeline.run()
     # end = time.perf_counter()
     # print(f"Total execution time: {end - start:.6f}")
-
+    #
     # start = time.perf_counter()
     # pipeline = VnIndexRegimeFilterPipeline(max_workers=4,
-    #                                    mode="incremental",
-    #                                    current_time='2026-03-06')
+    #                                    mode="backfill",
+    #                                    current_time='2023-01-03')
     # pipeline.run()
     # end = time.perf_counter()
     # print(f"Total execution time: {end - start:.6f}")
@@ -428,20 +444,30 @@ if __name__ == "__main__":
     # start = time.perf_counter()
     # pipeline = StockVolumePipeline(max_workers=4,
     #                                        mode="backfill",
-    #                                        symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
+    #                                        symbol_queries=SQLQueries.GET_HOSE_TOP_83_COMPANY_LIQUIDITY_SYMBOL,
     #                                        current_time='2023-01-03')
     # pipeline.run_all_parallel()
     # end = time.perf_counter()
     # print(f"Total execution time: {end - start:.6f}")
 
+    # start = time.perf_counter()
+    # pipeline = StockStructuralStrengthPipeline(max_workers=4,
+    #                                mode="backfill",
+    #                                symbol_queries=SQLQueries.GET_HOSE_TOP_83_COMPANY_LIQUIDITY_SYMBOL,
+    #                                current_time='2023-01-03')
+    # pipeline.run_all_parallel()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
+
     start = time.perf_counter()
-    pipeline = StockStructuralStrengthPipeline(max_workers=4,
-                                   mode="incremental",
-                                   symbol_queries=SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL,
-                                   current_time='2026-03-06')
-    pipeline.run_all_parallel()
+    pipeline = StockRankingPipeline(max_workers=4,
+                                               mode="incremental",
+                                               current_time='2025-10-09')
+    pipeline.run()
     end = time.perf_counter()
     print(f"Total execution time: {end - start:.6f}")
+
+
 
 
     

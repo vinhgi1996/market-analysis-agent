@@ -2,6 +2,8 @@ import logging
 import time
 from vnstock import Quote,Listing
 from io import StringIO
+
+from constant.constants.stock.stock_id_constant import StockIDConstant
 from constant.sql.sql_queries import SQLQueries
 from util.postgre_sql import PostgresSQLUtil
 import pandas as pd
@@ -13,7 +15,9 @@ def vnindex():
     # Read CSV into DataFrame
     df = pd.read_csv("vnindex.csv")
 
-    df["time"] = pd.to_datetime(df["time"], format="%d/%m/%Y")
+    # NOTICE : at this point, we need to plus 7 hour to the time so it will match with stock
+    # ohlvc data for further process.
+    df["time"] = pd.to_datetime(df["time"], format="%d/%m/%Y") + pd.Timedelta(hours=7)
     df["volume"] = (
         df["volume"]
         .str.upper()
@@ -138,13 +142,16 @@ def vnindex():
 def ohlvc():
     logger.info("🔄 Ingesting symbol by exchange data...")
 
-    symbols =  PostgresSQLUtil.run_sql(SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL)
+    #symbols =  PostgresSQLUtil.run_sql(SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL)
+    symbols = StockIDConstant.TOP_LIQUIDITY_STOCKS
+
     batch_size = 20
     delay = 120
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i:i + batch_size]
         for row in batch:
-            ohlvc_insert(row["symbol"],'KBS','2026-02-26','2026-03-06',"1D")
+            #ohlvc_insert(row["symbol"],'KBS','2023-01-3','2026-03-06',"1D")
+            ohlvc_insert(row, 'KBS', '2023-01-3', '2026-03-06', "1D")
 
         if i + batch_size < len(symbols):
             print(f"Processed {i + batch_size} rows. Sleeping {delay} seconds...")
@@ -447,8 +454,9 @@ def run_ingest():
     print("Ingestion started.")
     #symbol_by_industry()
     #symbol_by_exchange()
-    ohlvc()
-    #vnindex()
+    #ohlvc()
+    vnindex()
+    #print(len(StockIDConstant.TOP_LIQUIDITY_STOCKS))
 
 
 if __name__ == "__main__":

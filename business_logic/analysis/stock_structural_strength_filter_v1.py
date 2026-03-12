@@ -6,7 +6,6 @@ from config.postgre_manager import PostgresManager
 from constant.constants.analysis.stock_structural_strength_filter_constant import StockStructuralStrengthFilterConstant
 from constant.constants.stock.stock_moving_average_constant import MaConstant
 from constant.sql.analysis.stock_structural_strength_filter_sql_queries import StockStructuralStrengthFilterSQLQueries
-from constant.sql.stock.stock_moving_average_sql_queries import MovingAverageSQLQueries
 from util.pandas_util import PandasUtil
 from util.postgre_sql import PostgresSQLUtil
 # Thread pool for running symbol jobs concurrently.
