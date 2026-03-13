@@ -4,7 +4,9 @@ import numpy as np
 from datetime import datetime, timedelta
 from business_logic.analysis.stock_ranking_filter_v1 import StockRankingPipeline
 from business_logic.analysis.stock_structural_strength_filter_v1 import StockStructuralStrengthPipeline
+from business_logic.analysis.stock_structural_strength_filter_v2 import StockStructuralStrengthPipelineV2
 from business_logic.analysis.vnindex_regime_filter_v1 import VnIndexRegimeFilterPipeline
+from business_logic.back_testing.stock_ranking_filter_testing_v1 import StockRankingTesting
 from business_logic.stock_ohlvc.stock_momentum_pipeline_v1 import StockMomentumPipeline
 from business_logic.stock_ohlvc.stock_moving_average_pipeline_v1 import StockMovingAveragePipeline
 from business_logic.stock_ohlvc.stock_rsi_pipeline_v1 import StockRsiPipeline
@@ -459,11 +461,30 @@ if __name__ == "__main__":
     # end = time.perf_counter()
     # print(f"Total execution time: {end - start:.6f}")
 
+    # start = time.perf_counter()
+    # pipeline = StockStructuralStrengthPipelineV2(max_workers=4,
+    #                                mode="backfill",
+    #                                symbol_queries=SQLQueries.GET_HOSE_TOP_83_COMPANY_LIQUIDITY_SYMBOL,
+    #                                current_time='2023-01-03')
+    # pipeline.run_all_parallel()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
+
+    # start = time.perf_counter()
+    # pipeline = StockRankingPipeline(max_workers=4,
+    #                                 mode="backfill",
+    #                                 current_time='2025-05-09',
+    #                                 start_date='2023-01-03',
+    #                                 end_date='2026-03-06')
+    # pipeline.run()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
+
     start = time.perf_counter()
-    pipeline = StockRankingPipeline(max_workers=4,
-                                               mode="incremental",
-                                               current_time='2025-10-09')
-    pipeline.run()
+    pipeline = StockRankingTesting( current_time='2023-01-03',
+                                    start_date='2025-09-23',
+                                    end_date='2025-10-17')
+    pipeline.ic_test()
     end = time.perf_counter()
     print(f"Total execution time: {end - start:.6f}")
 

@@ -68,7 +68,7 @@ class StockRankingFilterSQLQueries(str, Enum):
 
     DELETE_STOCK_RANKING_DATA_BY_DATE_RANGE = (
         "DELETE FROM stock_ranking_filter "
-        "WHER time BETWEEN %s AND %s "
+        "WHERE time BETWEEN %s AND %s "
     )
 
     COPY_STOCK_RANKING_DATA = (

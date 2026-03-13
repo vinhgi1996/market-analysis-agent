@@ -3,35 +3,36 @@ import logging
 from config.postgre_manager import PostgresManager
 from constant.constants.analysis.stock_ranking_filter_constant import StockRankingFilterConstant
 from constant.sql.analysis.stock_ranking_filter_sql_queries import StockRankingFilterSQLQueries
+from constant.sql.back_testing.stock_ranking_testing_sql_queries import StockRankingTestingSQLQueries
 
 from util.pandas_util import PandasUtil
 from util.postgre_sql import PostgresSQLUtil
 # Thread pool for running symbol jobs concurrently.
 
-
-
 import pandas as pd
+pd.set_option('display.max_columns', None)
+pd.set_option('display.max_rows', None)
+pd.set_option('display.width', None)
+pd.set_option('display.max_colwidth', None)
 from io import StringIO
 
 from util.time_util import TimeUtil
 
 import matplotlib.pyplot as plt
+from scipy.stats import spearmanr
 
-class StockRankingPipeline:
+import numpy as np
+
+class StockRankingTesting:
 
     def __init__(
             self,
-            max_workers: int = 5,
             current_time: str = "",
             start_date: str = "",
             end_date: str = "",
-            mode: str = ""
     ):
         # Logger is class-scoped for pipeline-specific tracing.
         self.logger = logging.getLogger(self.__class__.__name__)
-
-        # Reserved concurrency setting for broader orchestrations.
-        self.max_workers = max_workers
 
         # Effective processing date/time; used by incremental read + scoped delete.
         self.current_time = TimeUtil.add_time_to_date(current_time)
@@ -40,8 +41,6 @@ class StockRankingPipeline:
 
         self.end_date = TimeUtil.add_time_to_date(end_date)
 
-        # Mode selector. Expected values: "backfill" or "incremental".
-        self.mode = mode
 
     # =========================================================
     # Public API
@@ -68,13 +67,73 @@ class StockRankingPipeline:
 
             df = None
 
-            if self.mode == StockRankingFilterConstant.MODE_BACKFILL.value:
-                df = self._backfill_synthesize()
-            elif self.mode == StockRankingFilterConstant.MODE_INCREMENTAL.value:
-                df = self._incremental_synthesize()
-            # Persist with idempotent refresh pattern (delete scope then COPY).
-            #
-            self._store(df)
+            self.logger.info(
+                StockRankingFilterConstant.LOG_FINISH.value
+            )
+        except Exception as e:
+            # Error is logged, not re-raised -> job continues for other symbols.
+            self.logger.error(
+                StockRankingFilterConstant.LOG_ERROR.value.format(symbol='VNINDEX', error=e)
+            )
+
+    def _compute_ic(self,group):
+        if len(group) < 5:
+            return None
+        return spearmanr(group["alpha_score"], group["fwd_return_20d"]).correlation
+
+
+    def ic_test(self):
+
+        try:
+            self.logger.info(
+                StockRankingFilterConstant.LOG_START.value
+            )
+
+            # Latest feature snapshot up to boundary date (inclusive by SQL boundary logic).
+            ohlvc_data = PostgresSQLUtil.run_sql(
+                StockRankingTestingSQLQueries.GET_STOCK_OHLVC_DATA_BY_DATE_RANGE,
+                (self.start_date, self.end_date,self.start_date, self.end_date)
+            )
+
+            stock_ranking_data = PostgresSQLUtil.run_sql(
+                StockRankingTestingSQLQueries.GET_STOCK_RANKING_DATA_BY_DATE_RANGE,
+                (self.start_date, self.end_date)
+            )
+
+            # Materialize SQL rows into DataFrame for vectorized logic.
+            ohlvc_df = pd.DataFrame(ohlvc_data)
+            stock_ranking_df = pd.DataFrame(stock_ranking_data)
+
+            ohlvc_df["fwd_return_20d"] = ohlvc_df["close_20"]/ohlvc_df["close"] - 1
+
+            df_merged = pd.merge(stock_ranking_df, ohlvc_df, on=['time', 'symbol'])
+            df_merged = df_merged.dropna(subset=["alpha_score", "fwd_return_20d"])
+            df_merged["fwd_return_20d"] = df_merged["fwd_return_20d"].clip(-0.5, 0.5)
+
+            df_merged = df_merged.sort_values(
+                by=['time', 'alpha_score'],
+                ascending=[False, False]
+            )
+            print(f":{df_merged.head(100)}")
+
+            ic_series = df_merged.groupby("time").apply(self._compute_ic)
+            ic_mean = ic_series.mean()
+            ic_std = ic_series.std()
+
+            n = len(ic_series)
+
+            ic_tstat = ic_mean / (ic_std / np.sqrt(n))
+
+            positive_ic_pct = (ic_series > 0).mean()
+
+            print("IC Mean:", ic_mean)
+            print("IC Std:", ic_std)
+            print("IC T-Stat:", ic_tstat)
+            print("Positive IC %:", positive_ic_pct)
+
+            ic_series.plot()
+            plt.title("Information Coefficient Over Time")
+            plt.show()
 
             self.logger.info(
                 StockRankingFilterConstant.LOG_FINISH.value
@@ -248,61 +307,3 @@ class StockRankingPipeline:
 
         return self._synthesis_logic(df)
 
-
-    # =========================================================
-    # Persistence
-    # =========================================================
-
-    def _store(self, df: pd.DataFrame):
-        """
-        Persist regime-filter dataframe:
-        - Skip if empty
-        - Delete existing target rows in scope
-        - Bulk insert via COPY for throughput
-
-        Transaction semantics:
-        - DELETE + COPY run in one transaction.
-        - Commit occurs only after both operations succeed.
-        - On failure, DB context manager rolls back uncommitted changes.
-
-        Idempotency:
-        - Re-running the same date range yields stable final state because
-          previous scoped rows are removed before inserting recalculated output.
-        """
-
-        # No synthesized rows => no persistence work.
-        if df.empty:
-            return
-
-        with PostgresManager.get_sync_connection() as conn:
-            with conn.cursor() as cursor:
-                # ETL performance optimization:
-                # reduce commit latency for recoverable/recomputable workloads.
-                cursor.execute(StockRankingFilterConstant.SET_SYNC_COMMIT_OFF.value)
-
-                # Step 1: clear affected date scope before writing refreshed rows.
-                if self.mode == StockRankingFilterConstant.MODE_BACKFILL.value:
-                    cursor.execute(
-                        StockRankingFilterSQLQueries.DELETE_STOCK_RANKING_DATA_BY_DATE_RANGE,
-                        (self.start_date, self.end_date)
-                    )
-                elif self.mode == StockRankingFilterConstant.MODE_INCREMENTAL.value:
-                    cursor.execute(
-                        StockRankingFilterSQLQueries.DELETE_STOCK_RANKING_DATA_BY_DATE,
-                        (self.current_time,)
-                    )
-
-                # Step 2: serialize dataframe into in-memory CSV for COPY.
-                # header=False because COPY SQL explicitly declares destination columns.
-                buffer = StringIO()
-                df.to_csv(buffer, index=False, header=False)
-                buffer.seek(0)
-
-                # Step 3: bulk insert into regime target table.
-                cursor.copy_expert(
-                    StockRankingFilterSQLQueries.COPY_STOCK_RANKING_DATA,
-                    buffer
-                )
-
-                # Step 4: finalize atomic refresh (delete + copy).
-            conn.commit()
