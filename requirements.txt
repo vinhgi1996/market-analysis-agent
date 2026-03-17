@@ -1,4 +1,4 @@
-vnstock~=3.4.2
+vnstock~=3.5.0
 pytz
 pydantic~=2.12.4
 pydantic-settings~=2.12.0
@@ -9,4 +9,6 @@ psycopg2-binary~=2.9.10
 asyncpg~=0.30.0
 pandas~=3.0.1
 numpy~=2.4.2
-scipy
+scipy~=1.17.1
+matplotlib~=3.10.8
+statsmodels~=0.14.6

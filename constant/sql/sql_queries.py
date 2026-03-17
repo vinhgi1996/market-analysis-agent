@@ -28,7 +28,7 @@ class SQLQueries(str, Enum):
                             "INNER JOIN symbol_by_exchange sbe "
                             "ON sbi.symbol = sbe.symbol "
                             "where sbi.icb_name4 in ('Thiết bị và Dịch vụ Dầu khí', 'Sản xuất & Phân phối Điện', 'Phân phối xăng dầu & khí đốt', 'Sản xuất và Khai thác dầu khí') "
-                            "and sbe.exchange = 'HSX' "
+                            "and sbe.exchange = 'HSX' and sbi.symbol != 'TTE'"
     )
 
     GET_HOSE_TOP_83_COMPANY_LIQUIDITY_SYMBOL = (

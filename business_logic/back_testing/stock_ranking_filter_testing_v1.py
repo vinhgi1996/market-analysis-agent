@@ -23,6 +23,8 @@ from scipy.stats import spearmanr
 
 import numpy as np
 
+import statsmodels.api as sm
+
 class StockRankingTesting:
 
     def __init__(
@@ -81,6 +83,136 @@ class StockRankingTesting:
             return None
         return spearmanr(group["alpha_score"], group["fwd_return_20d"]).correlation
 
+    def _compute_ic_multiple_return(self,group, return_col):
+
+        if len(group) < 5:
+            return np.nan
+
+        return spearmanr(
+            group["alpha_score"],
+            group[return_col]
+        )[0]
+
+    def _newey_west_tstat(self, ic_series, lag=20):
+
+        ic_array = np.array(ic_series.dropna())
+
+        X = np.ones(len(ic_array))
+
+        model = sm.OLS(ic_array, X)
+
+        results = model.fit(cov_type='HAC', cov_kwds={'maxlags': lag})
+
+        mean_ic = results.params[0]
+        t_stat = results.tvalues[0]
+
+        return mean_ic, t_stat
+
+    def factor_decay_curve(self):
+        try:
+            self.logger.info(
+                StockRankingFilterConstant.LOG_START.value
+            )
+
+            # Latest feature snapshot up to boundary date (inclusive by SQL boundary logic).
+            ohlvc_data = PostgresSQLUtil.run_sql(
+                StockRankingTestingSQLQueries.GET_STOCK_OHLVC_DATA_BY_DATE_RANGE_V2,
+                (self.start_date, self.end_date,self.start_date, self.end_date)
+            )
+
+            stock_ranking_data = PostgresSQLUtil.run_sql(
+                StockRankingTestingSQLQueries.GET_STOCK_RANKING_DATA_BY_DATE_RANGE,
+                (self.start_date, self.end_date)
+            )
+
+            # Materialize SQL rows into DataFrame for vectorized logic.
+            ohlvc_df = pd.DataFrame(ohlvc_data)
+            stock_ranking_df = pd.DataFrame(stock_ranking_data)
+
+            ohlvc_df = PandasUtil.cast_object_columns_to_float64(ohlvc_df)
+            stock_ranking_df = PandasUtil.cast_object_columns_to_float64(stock_ranking_df)
+
+            ohlvc_df["fwd_return_5d"] = ohlvc_df["close_5"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_10d"] = ohlvc_df["close_10"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_15d"] = ohlvc_df["close_15"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_20d"] = ohlvc_df["close_20"]/ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_25d"] = ohlvc_df["close_25"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_30d"] = ohlvc_df["close_30"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_35d"] = ohlvc_df["close_35"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_40d"] = ohlvc_df["close_40"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_45d"] = ohlvc_df["close_45"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_50d"] = ohlvc_df["close_50"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_55d"] = ohlvc_df["close_55"] / ohlvc_df["close"] - 1
+            ohlvc_df["fwd_return_60d"] = ohlvc_df["close_60"] / ohlvc_df["close"] - 1
+
+            df_merged = pd.merge(stock_ranking_df, ohlvc_df, on=['time', 'symbol'])
+            df_merged = df_merged.dropna(subset=["alpha_score",
+                                                 "fwd_return_5d",
+                                                 "fwd_return_10d",
+                                                 "fwd_return_15d",
+                                                 "fwd_return_20d",
+                                                 "fwd_return_25d",
+                                                 "fwd_return_30d",
+                                                 "fwd_return_35d",
+                                                 "fwd_return_40d",
+                                                 "fwd_return_45d",
+                                                 "fwd_return_50d",
+                                                 "fwd_return_55d",
+                                                 "fwd_return_60d"])
+            df_merged["fwd_return_5d"] = df_merged["fwd_return_5d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_10d"] = df_merged["fwd_return_10d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_15d"] = df_merged["fwd_return_15d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_20d"] = df_merged["fwd_return_20d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_25d"] = df_merged["fwd_return_25d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_30d"] = df_merged["fwd_return_30d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_35d"] = df_merged["fwd_return_35d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_40d"] = df_merged["fwd_return_40d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_45d"] = df_merged["fwd_return_45d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_50d"] = df_merged["fwd_return_50d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_55d"] = df_merged["fwd_return_55d"].clip(-0.5, 0.5)
+            df_merged["fwd_return_60d"] = df_merged["fwd_return_60d"].clip(-0.5, 0.5)
+
+
+            df_merged = df_merged.sort_values(
+                by=['time', 'alpha_score'],
+                ascending=[False, False]
+            )
+            print(f":{df_merged.head(100)}")
+
+            horizons = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+
+            ic_results = {}
+
+            for h in horizons:
+                col = f"fwd_return_{h}d"
+
+                daily_ic = df_merged.groupby("time").apply(
+                    lambda g: self._compute_ic_multiple_return(g, col)
+                )
+
+                ic_results[h] = daily_ic.mean()
+
+            print(ic_results)
+
+            horizons = list(ic_results.keys())
+            values = list(ic_results.values())
+
+            plt.plot(horizons, values, marker='o')
+
+            plt.title("Factor Decay Curve")
+            plt.xlabel("Forward Return Horizon (days)")
+            plt.ylabel("Mean IC")
+
+            plt.show()
+
+            self.logger.info(
+                StockRankingFilterConstant.LOG_FINISH.value
+            )
+        except Exception as e:
+            # Error is logged, not re-raised -> job continues for other symbols.
+            self.logger.error(
+                StockRankingFilterConstant.LOG_ERROR.value.format(symbol='VNINDEX', error=e)
+            )
 
     def ic_test(self):
 
@@ -104,6 +236,9 @@ class StockRankingTesting:
             ohlvc_df = pd.DataFrame(ohlvc_data)
             stock_ranking_df = pd.DataFrame(stock_ranking_data)
 
+            ohlvc_df = PandasUtil.cast_object_columns_to_float64(ohlvc_df)
+            stock_ranking_df = PandasUtil.cast_object_columns_to_float64(stock_ranking_df)
+
             ohlvc_df["fwd_return_20d"] = ohlvc_df["close_20"]/ohlvc_df["close"] - 1
 
             df_merged = pd.merge(stock_ranking_df, ohlvc_df, on=['time', 'symbol'])
@@ -120,15 +255,19 @@ class StockRankingTesting:
             ic_mean = ic_series.mean()
             ic_std = ic_series.std()
 
+            # NORMAL TSTAT
             n = len(ic_series)
+            ic_tstat_naive = ic_mean / (ic_std / np.sqrt(n))
 
-            ic_tstat = ic_mean / (ic_std / np.sqrt(n))
+            # NEWEY-WEST TSTAT
+            nw_mean_ic, ic_tstat_nw = self._newey_west_tstat(ic_series, lag=20)
 
             positive_ic_pct = (ic_series > 0).mean()
 
             print("IC Mean:", ic_mean)
             print("IC Std:", ic_std)
-            print("IC T-Stat:", ic_tstat)
+            print("Naive IC T-Stat:", ic_tstat_naive)
+            print("Newey-West IC T-Stat:", ic_tstat_nw )
             print("Positive IC %:", positive_ic_pct)
 
             ic_series.plot()
@@ -144,166 +283,160 @@ class StockRankingTesting:
                 StockRankingFilterConstant.LOG_ERROR.value.format(symbol='VNINDEX', error=e)
             )
 
-    # =========================================================
-    # Feature Engineering Helper
-    # =========================================================
-    def _winsorize_zscore(self, series, lower_q=0.05, upper_q=0.95):
-        lower = series.quantile(lower_q)
-        upper = series.quantile(upper_q)
+    def _compute_spread(self,group):
 
-        clipped = series.clip(lower, upper)
+        if len(group) < 6:
+            return None
 
-        mean = clipped.mean()
-        std = clipped.std()
+        group = group.sort_values("alpha_score", ascending=False)
 
-        z = (clipped - mean) / std
-        return z
+        n = len(group)
+        k = max(1, int(n * 0.3))
 
-    def _zscore(self, series, lower_q=0.05, upper_q=0.95):
+        top = group.head(k)
+        bottom = group.tail(k)
 
-        mean = series.mean()
-        std = series.std()
+        top_return = top["fwd_return_20d"].mean()
+        bottom_return = bottom["fwd_return_20d"].mean()
 
-        z = (series - mean) / std
-        return z
+        spread = top_return - bottom_return
 
-    def _compute_momentum_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        # MOMENTUM handling
-        # compute relative momentum metrics between stock momentum and vnindex momentum
-        df["relative_m1"] = df["sm_1"] - df["vnim_1"]
-        df["relative_m3"] = df["sm_3"] - df["vnim_3"]
-        df["relative_m6"] = df["sm_6"] - df["vnim_6"]
+        return pd.Series({
+            "top_return": top_return,
+            "bottom_return": bottom_return,
+            "spread": spread,
+            "top_n": k,
+            "universe_size": n
+        })
 
-        # computing z score for each momentum metric
-        df["m1_z"] = self._winsorize_zscore(df["relative_m1"]).clip(-3, 3)
-        df["m3_z"] = self._winsorize_zscore(df["relative_m3"]).clip(-3, 3)
-        df["m6_z"] = self._winsorize_zscore(df["relative_m6"]).clip(-3, 3)
+    def _assign_quintiles(self,group):
 
-        # score for whole factor
-        df["relative_momentum_score"] = 0.4 * df["m3_z"] + 0.35 * df["m6_z"] + 0.25 * df["m1_z"]
+        if len(group) < 10:
+            return None
 
-        # this code is used to plot relative momentum score, for better visualization
-        # df_sorted = df.sort_values("relative_momentum_score")
-        # plt.bar(df_sorted["symbol"], df_sorted["relative_momentum_score"])
-        # plt.axhline(0)
-        # plt.title("Momentum Score by Stock")
-        # plt.ylabel("Z-score")
-        # plt.show()
+        group = group.sort_values("alpha_score")
 
-        df["momentum_adjusted"] = df["relative_momentum_score"] * (1 - df["vol_20d_pct_126"])
-        return df
-
-    def _compute_trend_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        # TREND handling
-        # compute raw trend metrics
-        df["close_sma50"] = df["close"] / df["sma_50"]
-        df["sma20_sma50"] = df["sma_20"] / df["sma_50"]
-
-        # compute z score
-        df["close_sma50_z"] = self._winsorize_zscore(df["close_sma50"]).clip(-3, 3)
-        df["sma20_sma50_z"] = self._winsorize_zscore(df["sma20_sma50"]).clip(-3, 3)
-
-        # score for whole factor
-        df["trend_score"] = 0.6 * df["close_sma50_z"] + 0.4 * df["sma20_sma50_z"]
-        return df
-
-    def _compute_volatility_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        # VOLATILITY factor
-        # compute raw volatility metric
-        df["atr14_close"] = df["atr_14_w"] / df["close"]
-
-        # compute z score
-        df["atr14_close_z"] = self._winsorize_zscore(df["atr14_close"]).clip(-3, 3)
-        df["vol_20d_pct_126_z"] = self._winsorize_zscore(df["vol_20d_pct_126"]).clip(-3, 3)
-
-        # score for whole factor
-        df["volatility_score"] = -0.5 * df["atr14_close_z"] + -0.5 * df["vol_20d_pct_126_z"]
-        return df
-
-    def _compute_rsi_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        # RSI factor
-        # compute raw RSI metric
-        df["rsi_centered"] = abs(df["rsi_14"] - 55)
-        df["rsi_score"] = -df["rsi_centered"]
-
-        # compute z score
-        df["rsi_14_z"] = self._zscore(df["rsi_score"]).clip(-3, 3)
-        return df
-
-    def _compute_alpha_score(self, df: pd.DataFrame) -> pd.DataFrame:
-        # FINAL ALPHA SCORE construct
-        df["alpha_score"] = (0.45 * df["momentum_adjusted"]
-                             + 0.30 * df["trend_score"]
-                             + 0.15 * df["volatility_score"]
-                             + 0.10 * df["rsi_14_z"])
-        return df
-
-    def _select_persisted_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        # Return single-row dataframe aligned with persistence contract.
-        return df[
-            [
-                StockRankingFilterConstant.TIME_KEY.value,
-                StockRankingFilterConstant.SYMBOL_KEY.value,
-                StockRankingFilterConstant.ALPHA_SCORE_KEY.value,
-            ]
-        ]
-
-    def _synthesis_logic(self, df: pd.DataFrame) -> pd.DataFrame:
-
-        # Convert numeric-like object columns (common DB NUMERIC) to float64.
-        # CAUTION: conversion fails if any object column contains non-numeric values.
-        df = PandasUtil.cast_object_columns_to_float64(df)
-
-        df = self._compute_momentum_features(df)
-        df = self._compute_trend_features(df)
-        df = self._compute_volatility_features(df)
-        df = self._compute_rsi_features(df)
-
-        df = self._compute_alpha_score(df)
-
-        df = df.sort_values(by="alpha_score", ascending=False)
-
-        return self._select_persisted_columns(df)
-
-    # =========================================================
-    # Feature Engineering
-    # =========================================================
-
-    def _backfill_synthesize(self) -> pd.DataFrame:
-
-        # Latest feature snapshot up to boundary date (inclusive by SQL boundary logic).
-        data = PostgresSQLUtil.run_sql(
-            StockRankingFilterSQLQueries.GET_DATA_BY_DATE_RANGE,
-            (self.start_date,self.end_date)
+        group["quintile"] = pd.qcut(
+            group["alpha_score"],
+            5,
+            labels=[1, 2, 3, 4, 5]
         )
 
-        # Materialize SQL rows into DataFrame for vectorized logic.
-        df = pd.DataFrame(data)
+        return group
 
-        if df.empty:
-            return df
+    def portfolio_spread_test(self):
 
-        frames = (
-            self._synthesis_logic(df_day)
-            for _, df_day in df.groupby("time")
-        )
+        try:
+            self.logger.info(
+                StockRankingFilterConstant.LOG_START.value
+            )
 
-        return pd.concat(frames, ignore_index=True)
+            # Latest feature snapshot up to boundary date (inclusive by SQL boundary logic).
+            ohlvc_data = PostgresSQLUtil.run_sql(
+                StockRankingTestingSQLQueries.GET_STOCK_OHLVC_DATA_BY_DATE_RANGE,
+                (self.start_date, self.end_date,self.start_date, self.end_date)
+            )
+
+            stock_ranking_data = PostgresSQLUtil.run_sql(
+                StockRankingTestingSQLQueries.GET_STOCK_RANKING_DATA_BY_DATE_RANGE,
+                (self.start_date, self.end_date)
+            )
+
+            # Materialize SQL rows into DataFrame for vectorized logic.
+            ohlvc_df = pd.DataFrame(ohlvc_data)
+            stock_ranking_df = pd.DataFrame(stock_ranking_data)
+
+            ohlvc_df = PandasUtil.cast_object_columns_to_float64(ohlvc_df)
+            stock_ranking_df = PandasUtil.cast_object_columns_to_float64(stock_ranking_df)
+
+            ohlvc_df["fwd_return_20d"] = ohlvc_df["close_20"]/ohlvc_df["close"] - 1
+
+            df_merged = pd.merge(stock_ranking_df, ohlvc_df, on=['time', 'symbol'])
+            df_merged = df_merged.dropna(subset=["alpha_score", "fwd_return_20d"])
+            df_merged["fwd_return_20d"] = df_merged["fwd_return_20d"].clip(-0.5, 0.5)
+
+            df_merged = df_merged.sort_values(
+                by=['time', 'alpha_score'],
+                ascending=[False, False]
+            )
+            print(f":{df_merged.head(100)}")
+
+            spread_df  = df_merged.groupby("time").apply(self._compute_spread)
+            spread_df = spread_df.dropna()
+
+            spread_mean = spread_df["spread"].mean()
+            spread_std = spread_df["spread"].std()
+            N = len(spread_df)
+
+            spread_tstat = spread_mean / (spread_std / np.sqrt(N))
+
+            positive_pct = (spread_df["spread"] > 0).mean()
+
+            spread_df["cum_spread"] = (1 + spread_df["spread"]).cumprod()
+
+            print("Mean spread:", spread_mean)
+            print("Mean Std:", spread_std)
+            print("Spread T-Stat:", spread_tstat)
+            print("Positive Spread %:", positive_pct)
+
+            plt.figure(figsize=(10, 6))
+
+            plt.plot(spread_df.index, spread_df["cum_spread"])
+
+            plt.title("Long-Short Spread Equity Curve")
+            plt.xlabel("Date")
+            plt.ylabel("Cumulative Return")
+
+            plt.grid(True)
+
+            plt.show()
+
+            print("Mean top_return:", spread_df["top_return"].mean())
+            print("Mean bottom_return:", spread_df["bottom_return"].mean())
+            print("Number of days:", len(spread_df))
+            print("Average universe size:", spread_df["universe_size"].mean())
+            print("Average top_n:", spread_df["top_n"].mean())
+
+            # Factor monotonicity test (quintile portfolios)
+
+            print(df_merged.head())
+
+            df_q = df_merged.groupby("time", group_keys=True).apply(self._assign_quintiles)
+            df_q = df_q.dropna()
+
+            # print(type(df_q))
+            # print(df_q.columns)
+            # print(df_q.index)
+            # print(df_q.head())
+
+            quintile_returns = (
+                df_q.groupby(["time", "quintile"])["fwd_return_20d"]
+                .mean()
+                .reset_index()
+            )
+
+            mean_quintile_return = (
+                quintile_returns.groupby("quintile")["fwd_return_20d"]
+                .mean()
+            )
+            print(mean_quintile_return)
+
+            mean_quintile_return.plot(kind="bar")
+
+            plt.title("Factor Monotonicity Test")
+            plt.ylabel("Mean Forward Return")
+            plt.xlabel("Quintile (Worst → Best)")
+            plt.show()
+
+            self.logger.info(
+                StockRankingFilterConstant.LOG_FINISH.value
+            )
+        except Exception as e:
+            # Error is logged, not re-raised -> job continues for other symbols.
+            self.logger.error(
+                StockRankingFilterConstant.LOG_ERROR.value.format(symbol='VNINDEX', error=e)
+            )
 
 
-    def _incremental_synthesize(self) -> pd.DataFrame:
 
-        # Latest feature snapshot up to boundary date (inclusive by SQL boundary logic).
-        data = PostgresSQLUtil.run_sql(
-            StockRankingFilterSQLQueries.GET_DATA_BY_DATE,
-            (self.current_time,)
-        )
-
-        # Materialize SQL rows into DataFrame for vectorized logic.
-        df = pd.DataFrame(data)
-
-        if df.empty:
-            return df
-
-        return self._synthesis_logic(df)
 

@@ -3,6 +3,7 @@ import time
 import numpy as np
 from datetime import datetime, timedelta
 from business_logic.analysis.stock_ranking_filter_v1 import StockRankingPipeline
+from business_logic.analysis.stock_ranking_filter_v2 import StockRankingPipelineV2
 from business_logic.analysis.stock_structural_strength_filter_v1 import StockStructuralStrengthPipeline
 from business_logic.analysis.stock_structural_strength_filter_v2 import StockStructuralStrengthPipelineV2
 from business_logic.analysis.vnindex_regime_filter_v1 import VnIndexRegimeFilterPipeline
@@ -480,11 +481,34 @@ if __name__ == "__main__":
     # end = time.perf_counter()
     # print(f"Total execution time: {end - start:.6f}")
 
+
     start = time.perf_counter()
-    pipeline = StockRankingTesting( current_time='2023-01-03',
-                                    start_date='2025-09-23',
+    pipeline = StockRankingPipelineV2(max_workers=4,
+                                    mode="backfill",
+                                    current_time='2025-05-09',
+                                    start_date='2023-01-03',
+                                    end_date='2026-03-06')
+    pipeline.run()
+    end = time.perf_counter()
+    print(f"Total execution time: {end - start:.6f}")
+
+
+    # start = time.perf_counter()
+    # pipeline = StockRankingTesting( current_time='2023-01-03',
+    #                                 start_date='2025-09-23',
+    #                                 end_date='2025-10-17')
+    # pipeline.ic_test()
+    # pipeline.portfolio_spread_test()
+    # end = time.perf_counter()
+    # print(f"Total execution time: {end - start:.6f}")
+
+    start = time.perf_counter()
+    pipeline = StockRankingTesting( current_time='2024-01-02',
+                                    start_date='2024-01-02',
                                     end_date='2025-10-17')
     pipeline.ic_test()
+    pipeline.portfolio_spread_test()
+    # pipeline.factor_decay_curve()
     end = time.perf_counter()
     print(f"Total execution time: {end - start:.6f}")
 

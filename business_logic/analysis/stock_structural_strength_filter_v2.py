@@ -123,13 +123,13 @@ class StockStructuralStrengthPipelineV2:
         cond = (
                 (df[StockStructuralStrengthFilterConstant.CLOSE_KEY.value].to_numpy() > df[StockStructuralStrengthFilterConstant.SOURCE_SMA_50.value].to_numpy()) &
                 #(df[StockStructuralStrengthFilterConstant.SOURCE_SMA_20.value].to_numpy() > df[StockStructuralStrengthFilterConstant.SOURCE_SMA_50.value].to_numpy()) &
-                (df[StockStructuralStrengthFilterConstant.SOURCE_M_3.value].to_numpy() > StockStructuralStrengthFilterConstant.M_3_THRESHOLD_VALUE.value) &
+                (df[StockStructuralStrengthFilterConstant.SOURCE_M_3.value].to_numpy() > StockStructuralStrengthFilterConstant.M_3_THRESHOLD_VALUE.value) #&
                 #(df[StockStructuralStrengthFilterConstant.SOURCE_M_1.value].to_numpy() > StockStructuralStrengthFilterConstant.M_1_THRESHOLD_VALUE.value) &
                 #(df[StockStructuralStrengthFilterConstant.SOURCE_RSI_14.value].to_numpy() < StockStructuralStrengthFilterConstant.RSI_14_THRESHOLD_VALUE.value) &
-                (df[StockStructuralStrengthFilterConstant.SOURCE_VOL_20D_PCT_126.value].to_numpy() < StockStructuralStrengthFilterConstant.VOL_20D_PCT_126_THRESHOLD_VALUE.value) &
-                (df[StockStructuralStrengthFilterConstant.SOURCE_ATR_14_W.value].to_numpy()/df[StockStructuralStrengthFilterConstant.CLOSE_KEY.value].to_numpy()
-                                                                                          < StockStructuralStrengthFilterConstant.ATR_14_CLOSE_THRESHOLD_VALUE.value) &
-                (df[StockStructuralStrengthFilterConstant.SOURCE_VOLUME_RATIO.value].to_numpy() < StockStructuralStrengthFilterConstant.VOLUME_RATIO_THRESHOLD_VALUE.value)
+                #(df[StockStructuralStrengthFilterConstant.SOURCE_VOL_20D_PCT_126.value].to_numpy() < StockStructuralStrengthFilterConstant.VOL_20D_PCT_126_THRESHOLD_VALUE.value) &
+                #(df[StockStructuralStrengthFilterConstant.SOURCE_ATR_14_W.value].to_numpy()/df[StockStructuralStrengthFilterConstant.CLOSE_KEY.value].to_numpy()
+                                                                                          #< StockStructuralStrengthFilterConstant.ATR_14_CLOSE_THRESHOLD_VALUE.value) &
+                #(df[StockStructuralStrengthFilterConstant.SOURCE_VOLUME_RATIO.value].to_numpy() < StockStructuralStrengthFilterConstant.VOLUME_RATIO_THRESHOLD_VALUE.value)
         )
 
 
