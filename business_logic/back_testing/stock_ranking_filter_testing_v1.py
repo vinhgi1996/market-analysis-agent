@@ -291,7 +291,7 @@ class StockRankingTesting:
         group = group.sort_values("alpha_score", ascending=False)
 
         n = len(group)
-        k = max(1, int(n * 0.3))
+        k = max(1, int(n * 0.46))
 
         top = group.head(k)
         bottom = group.tail(k)

@@ -5,6 +5,7 @@ from io import StringIO
 
 from constant.constants.stock.stock_id_constant import StockIDConstant
 from constant.sql.sql_queries import SQLQueries
+from util.collection_util import CollectionUtil
 from util.postgre_sql import PostgresSQLUtil
 import pandas as pd
 logger = logging.getLogger(__name__)
@@ -138,20 +139,23 @@ def vnindex():
     except Exception as e:
         logger.error(f"[ingest_symbol_master] Bulk upsert failed: {e}")
         raise
+def get_new_stock_id() -> None:
+    new_stock = CollectionUtil.get_unduplicate_value_from_list(StockIDConstant.TEMP_NEW_TOP_LIQUIDITY_STOCKS,StockIDConstant.TOP_LIQUIDITY_STOCKS)
+    print(new_stock)
 
 def ohlvc():
     logger.info("🔄 Ingesting symbol by exchange data...")
 
-    #symbols =  PostgresSQLUtil.run_sql(SQLQueries.GET_HOSE_ENERGY_COMPANY_SYMBOL)
-    symbols = StockIDConstant.TOP_LIQUIDITY_STOCKS
+    symbols =  PostgresSQLUtil.run_sql(SQLQueries.GET_TOP_OIL_SECTOR_COMPANY_SYMBOL)
+    #symbols = StockIDConstant.TOP_LIQUIDITY_STOCKS
 
     batch_size = 20
     delay = 120
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i:i + batch_size]
         for row in batch:
-            #ohlvc_insert(row["symbol"],'KBS','2023-01-3','2026-03-06',"1D")
-            ohlvc_insert(row, 'KBS', '2023-01-3', '2026-03-06', "1D")
+            ohlvc_insert(row["symbol"],'KBS','2026-03-25','2026-03-27',"1D")
+            #ohlvc_insert(row, 'KBS', '2023-01-02', '2026-03-23', "1D")
 
         if i + batch_size < len(symbols):
             print(f"Processed {i + batch_size} rows. Sleeping {delay} seconds...")
@@ -457,6 +461,8 @@ def run_ingest():
     #ohlvc()
     vnindex()
     #print(len(StockIDConstant.TOP_LIQUIDITY_STOCKS))
+    #print(len(StockIDConstant.TEMP_NEW_TOP_LIQUIDITY_STOCKS))
+    #get_new_stock_id()
 
 
 if __name__ == "__main__":

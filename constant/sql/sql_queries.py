@@ -31,7 +31,13 @@ class SQLQueries(str, Enum):
                             "and sbe.exchange = 'HSX' and sbi.symbol != 'TTE'"
     )
 
-    GET_HOSE_TOP_83_COMPANY_LIQUIDITY_SYMBOL = (
+    GET_TOP_OIL_SECTOR_COMPANY_SYMBOL = (
+                                        "SELECT symbol " 
+                                        "FROM symbol_by_industry "
+                                        "WHERE symbol IN ('PVS','OIL','PLX','PVD','PVC','POW','BSR') "
+    )
+
+    GET_HOSE_TOP_COMPANY_LIQUIDITY_SYMBOL = (
         "SELECT DISTINCT(symbol) "
         "FROM ohlcv_prices "
         "WHERE symbol IN ('EVF', 'HPG', 'PVT', 'SSI', 'VIX', 'VCG', 'DXG', 'BSR', 'SHB', 'MSN', 'POW', 'KHG', 'CII', "
@@ -40,8 +46,10 @@ class SQLQueries(str, Enum):
         "'VNM', 'VRE', 'HCM', 'VPI', 'VSC', 'LCG', 'HHV', 'VCB', 'KDH', 'PVD', 'GAS', 'VOS', 'STB', "
         "'NLG', 'DGW', 'GMD', 'HAG', 'NKG', 'PVP', 'VHM', 'BID', 'ORS', 'HDC', 'HSL', 'DBC', 'VIC', "
         "'KBC', 'HDG', 'SHI', 'SCR', 'HSG', 'HAH', 'PET', 'CRC', 'MSB', 'ANV', 'VJC', 'LPB', 'LDG', "
-        "'HVN', 'VCK', 'FCN', 'BAF', 'IJC') "
+        "'HVN', 'VCK', 'FCN', 'BAF', 'IJC','TCX', 'HHS', 'TCM', 'VPX', 'SSB', 'GEG', 'NAB', 'BVH',"
+        "'PAC', 'KSB', 'OCB', 'DXS')"
     )
+
 
 
 

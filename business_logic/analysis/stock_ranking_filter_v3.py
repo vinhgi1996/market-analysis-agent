@@ -17,7 +17,7 @@ from util.time_util import TimeUtil
 
 import matplotlib.pyplot as plt
 
-class StockRankingPipelineV2:
+class StockRankingPipelineV3:
 
     def __init__(
             self,
@@ -175,21 +175,13 @@ class StockRankingPipelineV2:
         df["rsi_14_z"] = self._zscore(df["rsi_score"]).clip(-3, 3)
         return df
 
-    def _compute_alpha_score(self, df: pd.DataFrame) -> pd.DataFrame:
-        # FINAL ALPHA SCORE construct
-        df["alpha_score"] = (0.40 * df["momentum_adjusted"]
-                             + 0.30 * df["trend_score"]
-                             + 0.20 * df["volatility_score"]
-                             + 0.10 * df["rsi_14_z"])
-        return df
-
     def _compute_uncorr_alpha_score(self, df: pd.DataFrame) -> pd.DataFrame:
 
         # FINAL ALPHA SCORE construct
-        df["alpha_score"] = (0.50 * df["momentum_adjusted"]
+        df["alpha_score"] = (0.10 * df["momentum_adjusted"]
                              + 0.10 * df["trend_score"]
                              + 0.20 * df["volatility_score"]
-                             + 0.10 * df["rsi_14_z"])
+                             + 0.50 * df["rsi_14_z"])
         return df
 
     def _compute_mean_alpha_score(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -226,7 +218,6 @@ class StockRankingPipelineV2:
         df = self._compute_volatility_features(df)
         df = self._compute_rsi_features(df)
 
-        #df = self._compute_alpha_score(df)
         df = self._compute_uncorr_alpha_score(df)
 
         df = df.sort_values(by="alpha_score", ascending=False)

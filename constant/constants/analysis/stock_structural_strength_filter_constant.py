@@ -17,6 +17,7 @@ class StockStructuralStrengthFilterConstant(Enum):
     CLOSE_KEY = "close"
     HIGH_KEY = "high"
     LOW_KEY = "low"
+    VOLUME_KEY = "volume"
     OBJECT_DTYPE = "object"
     FLOAT64_DTYPE = "float64"
 

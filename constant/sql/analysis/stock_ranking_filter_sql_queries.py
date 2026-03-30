@@ -57,7 +57,7 @@ class StockRankingFilterSQLQueries(str, Enum):
         "JOIN stock_volatility sv USING(symbol, time) "
         "JOIN stock_structural_strength_filter sss USING(symbol, time) "
         "WHERE time BETWEEN %s AND %s "
-        # "AND sss.suggestion ='POSSIBLE' "
+        "AND sss.suggestion ='POSSIBLE' "
         "ORDER BY time ASC "
     )
 

@@ -12,6 +12,7 @@ class StockStructuralStrengthFilterSQLQueries(str, Enum):
         "SELECT op.symbol AS symbol , "
             "op.time AS time, "
             "op.close AS close, "
+            "op.volume AS volume, "
             "stma.sma_20 AS sma_20, "
             "stma.sma_50 AS sma_50, "
             "stm.m_1 AS m_1, "

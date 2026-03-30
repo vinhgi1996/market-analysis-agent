@@ -24,7 +24,7 @@ class StockRankingTestingSQLQueries(str, Enum):
                 "op.symbol, "
                 "op.time, "
                 "op.close, "
-                "LAG(op.close, 20) OVER ( "
+                "LAG(op.close, 7) OVER ( "
                     "PARTITION BY op.symbol "
                     "ORDER BY op.time DESC "
                 ") AS close_20 "

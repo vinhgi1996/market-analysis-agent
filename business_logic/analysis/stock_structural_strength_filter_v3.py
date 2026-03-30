@@ -1,4 +1,5 @@
 import logging
+import os
 
 import numpy as np
 
@@ -15,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from io import StringIO
 
-class StockStructuralStrengthPipelineV2:
+class StockStructuralStrengthPipelineV3:
 
     def __init__(
             self,
@@ -96,7 +97,6 @@ class StockStructuralStrengthPipelineV2:
     def _backfill_synthesize(self, symbol:str) -> pd.DataFrame:
         """
         Build full-history regime-filter output.
-
         Function-scale steps:
         - Read fully joined upstream feature dataset from SQL.
         - Normalize numeric-like columns for vectorized comparisons.
@@ -104,6 +104,8 @@ class StockStructuralStrengthPipelineV2:
         - Compute `positive_streak` across the full series.
         - Return persistence columns in COPY-compatible order.
         """
+        if(symbol == 'CCI'):
+            print("did have CCI")
 
         # Backfill mode reads broad historical feature set for VNINDEX.
         data = PostgresSQLUtil.run_sql(
@@ -121,18 +123,17 @@ class StockStructuralStrengthPipelineV2:
         # SAFE only if all four conditions hold simultaneously.
         # Numpy arrays are used for efficient vectorized boolean evaluation.
         cond = (
+                (df[StockStructuralStrengthFilterConstant.CLOSE_KEY.value].to_numpy() > df[StockStructuralStrengthFilterConstant.SOURCE_SMA_20.value].to_numpy()) &
                 (df[StockStructuralStrengthFilterConstant.CLOSE_KEY.value].to_numpy() > df[StockStructuralStrengthFilterConstant.SOURCE_SMA_50.value].to_numpy()) &
-                (df[StockStructuralStrengthFilterConstant.SOURCE_SMA_20.value].to_numpy() > df[StockStructuralStrengthFilterConstant.SOURCE_SMA_50.value].to_numpy()) &
-                (df[StockStructuralStrengthFilterConstant.SOURCE_M_3.value].to_numpy() > StockStructuralStrengthFilterConstant.M_3_THRESHOLD_VALUE.value) &
-                (df[StockStructuralStrengthFilterConstant.SOURCE_M_1.value].to_numpy() > StockStructuralStrengthFilterConstant.M_1_THRESHOLD_VALUE.value) #&
+                (df[StockStructuralStrengthFilterConstant.VOLUME_KEY.value].to_numpy() > 1000000)
+                # (df[StockStructuralStrengthFilterConstant.SOURCE_M_3.value].to_numpy() > StockStructuralStrengthFilterConstant.M_3_THRESHOLD_VALUE.value) &
+                # (df[StockStructuralStrengthFilterConstant.SOURCE_M_1.value].to_numpy() > StockStructuralStrengthFilterConstant.M_1_THRESHOLD_VALUE.value) #&
                 #(df[StockStructuralStrengthFilterConstant.SOURCE_RSI_14.value].to_numpy() < StockStructuralStrengthFilterConstant.RSI_14_THRESHOLD_VALUE.value) &
                 #(df[StockStructuralStrengthFilterConstant.SOURCE_VOL_20D_PCT_126.value].to_numpy() < StockStructuralStrengthFilterConstant.VOL_20D_PCT_126_THRESHOLD_VALUE.value) #&
                 #(df[StockStructuralStrengthFilterConstant.SOURCE_ATR_14_W.value].to_numpy()/df[StockStructuralStrengthFilterConstant.CLOSE_KEY.value].to_numpy()
                                                                                           #< StockStructuralStrengthFilterConstant.ATR_14_CLOSE_THRESHOLD_VALUE.value) &
                 #(df[StockStructuralStrengthFilterConstant.SOURCE_VOLUME_RATIO.value].to_numpy() < StockStructuralStrengthFilterConstant.VOLUME_RATIO_THRESHOLD_VALUE.value)
         )
-
-
 
         # Map condition mask to categorical regime label.
         df[StockStructuralStrengthFilterConstant.SUGGESTION.value] = np.where(
